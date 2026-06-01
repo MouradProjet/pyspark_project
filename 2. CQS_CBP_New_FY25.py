@@ -205,6 +205,86 @@ def uep_cqs_78(gar, gar2):
         .withColumn(f'GEP_{gar}0', F.expr(f"""Primes_{gar} - UEP_{gar}0"""))
         .withColumn(f'UEP_PL_{gar}0', F.expr(f"""UEP_{gar}0"""))
     )
+
+
+
+
+
+
+	# ============================================================================
+# Hand-translated from %UEP_CQS_78 development loops
+#
+#   %do i=1 %to 15 ;                       →  for i in range(1, 16):
+#   %let j = %eval(&i.-1) ;                →  j = i - 1
+#   UEP_&gar.&i.   GEP_&gar.&i.   UEP_PL_&gar.&i.
+#
+# Assumes the DataFrame is the variable `df` and `gar` is a Python string
+# (e.g. gar = "IARD").  Insert this where the macro loop appears in uep_cqs_78().
+# REVIEW against SAS output before production use.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# FIRST LOOP — build UEP_{gar}1 .. UEP_{gar}15
+# Each year i has a 4-branch if / else-if / else-if / else.
+# In SAS the variable is first set to 0, then conditionally overwritten;
+# the leading "UEP=0" is redundant because every branch assigns a value,
+# so we translate only the 4-branch chain (the else covers all remaining rows).
+# ----------------------------------------------------------------------------
+for i in range(1, 16):
+    df = df.withColumn(
+        f'UEP_{gar}{i}',
+        # branch 1: claim year reached and terminated by a claim  → 0
+        F.when(
+            (F.year('date_sin') <= i + F.col('Generation')) &
+            (F.col('Date_term') == F.col('date_sin')),
+            F.lit(0)
+        )
+        # branch 2: surrender year reached and terminated by surrender → 0
+        .when(
+            (F.year('date_rachat2') <= i + F.col('Generation')) &
+            (F.col('Date_term') == F.col('date_rachat2')),
+            F.lit(0)
+        )
+        # branch 3: still in exposure beyond i*12 months → partial-year formula
+        .when(
+            (F.col('term_expoff') - F.col('Mois_fin_annee')) > i * 12,
+            F.expr(
+                f"(term - Mois_fin_annee - {i}*12) * "
+                f"(term - Mois_fin_annee - {i}*12 + 1) / "
+                f"((term + 1) * term) * Primes_{gar}"
+            )
+        )
+        # branch 4 (else): off-period remainder formula
+        .otherwise(
+            F.expr(
+                f"(term - term_expoff) * (term - term_expoff + 1) / "
+                f"(term * (term + 1)) * Primes_{gar}"
+            )
+        )
+    )
+
+# ----------------------------------------------------------------------------
+# Year-0 base values (outside the loop)
+# ----------------------------------------------------------------------------
+df = df.withColumn(f'GEP_{gar}0',    F.col(f'Primes_{gar}') - F.col(f'UEP_{gar}0'))
+df = df.withColumn(f'UEP_PL_{gar}0', F.col(f'UEP_{gar}0'))
+
+# ----------------------------------------------------------------------------
+# SECOND LOOP — build GEP_{gar}1..15 and UEP_PL_{gar}1..15
+#   j = i - 1   (previous development year)
+#   GEP_{gar}{i}    = UEP_{gar}{j} - UEP_{gar}{i}
+#   UEP_PL_{gar}{i} = UEP_{gar}{i} - UEP_{gar}{j}
+# ----------------------------------------------------------------------------
+for i in range(1, 16):
+    j = i - 1
+    df = df.withColumn(
+        f'GEP_{gar}{i}',
+        F.col(f'UEP_{gar}{j}') - F.col(f'UEP_{gar}{i}')
+    )
+    df = df.withColumn(
+        f'UEP_PL_{gar}{i}',
+        F.col(f'UEP_{gar}{i}') - F.col(f'UEP_{gar}{j}')
+    )
         # ===== MANUAL REVIEW REQUIRED: macro code inside DATA step =====
         # The following SAS uses a macro %do/%let loop to generate
         # indexed columns at compile time. Translate by hand using a
