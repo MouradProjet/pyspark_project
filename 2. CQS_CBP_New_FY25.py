@@ -52,18 +52,18 @@ export_xx = f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_E
 # quit ;
 def import_excelx(datafile, out, onglet):
         _df_tmp = (spark.read.format('com.crealytics.spark.excel')
-            .option('sheetName', f'{onglet}')
+            .option('dataAddress', f'{onglet}!A1')
             .option('header', 'true')
             .load(datafile))
         _df_tmp.createOrReplaceTempView(out)
 
 
 def export_excelx(database, datatable, sheet):
-    datatable.write.format('com.crealytics.spark.excel').option('sheetName', f'{sheet}').option('header', 'true').mode('overwrite').save(database)
+    datatable.write.format('com.crealytics.spark.excel').option('dataAddress', f'{sheet}!A1').option('header', 'true').mode('overwrite').save(database)
 
 
 def export_excel(database, datatable, sheet):
-    datatable.write.format('com.crealytics.spark.excel').option('sheetName', f'{sheet}').option('header', 'true').mode('overwrite').save(database)
+    datatable.write.format('com.crealytics.spark.excel').option('dataAddress', f'{sheet}!A1').option('header', 'true').mode('overwrite').save(database)
 
 
 # Import Stop Loss
@@ -162,15 +162,15 @@ def prepa_table(table_gwp, table_claims):
 prepa_table(table_gwp=table_gwp, table_claims=table_claims)
 def uep_cqs_78(gar, gar2):
     _dfs[f'CQS_PPNA_{gar}'] = Table_CQS_MeF_2
-    _dfs[f'CQS_PPNA_{gar}'] = _dfs[f'CQS_PPNA_{gar}'].filter(F.expr(f"""Primes_{gar} != ."""))
+    _dfs[f'CQS_PPNA_{gar}'] = _dfs[f'CQS_PPNA_{gar}'].filter(F.expr(f"""Primes_{gar} IS NOT NULL"""))
     # type_pret rajouté au HY24 pour la cession
-    _dfs[f'CQS_PPNA_{gar}'] = _dfs[f'CQS_PPNA_{gar}'].select('ID_Adh', 'Financiere_Adh', 'ID_Police', 'sit_prof_1', 'generation', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'date_rachat', 'date_sin', 'Primes_{gar}', 'Rachat_{gar}', 'type_pret')
+    _dfs[f'CQS_PPNA_{gar}'] = _dfs[f'CQS_PPNA_{gar}'].select('ID_Adh', 'Financiere_Adh', 'ID_Police', 'sit_prof_1', 'generation', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'date_rachat', 'date_sin', f'Primes_{gar}', f'Rachat_{gar}', 'type_pret')
     _dfs[f'CQS_PPNA_{gar}'].createOrReplaceTempView(f'CQS_PPNA_{gar}')
 
     # AJOUT AU FY25 : POUR EVITER QUE LES RACHATS SOIENT COMPTEES DEUX FOIS
     _dfs[f'CQS_PPNA_{gar}'] = spark.table(f'CQS_PPNA_{gar}')
     _dfs[f'CQS_PPNA_{gar}'] = (_dfs[f'CQS_PPNA_{gar}']
-        .withColumn('date_rachat2', F.when(F.expr("""year(date_rachat) != 2025"""), F.col('date_rachat')).otherwise(F.col('date_rachat2')))
+        .withColumn('date_rachat2', F.when(F.expr("""year(date_rachat) != 2025"""), F.col('date_rachat')))  # no ELSE: null when condition is false
     )
     # FORMAT/INFORMAT: format date_rachat2 ddmmyy10.
     # ou utilisez un autre format comme date9. pour une date courte
@@ -205,12 +205,12 @@ def uep_cqs_78(gar, gar2):
 
     _dfs[f'CQS_UEP_PL__{gar}'] = spark.table(f'CQS_PPNA_{gar}_2')
     # type_pret rajouté au HY24 pour la cession
-    _dfs[f'CQS_UEP_PL__{gar}'] = _dfs[f'CQS_UEP_PL__{gar}'].select('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat2', 'Date_Rachat', 'Primes_{gar}', 'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret')
+    _dfs[f'CQS_UEP_PL__{gar}'] = _dfs[f'CQS_UEP_PL__{gar}'].select('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat2', 'Date_Rachat', f'Primes_{gar}', f'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret')
     _dfs[f'CQS_UEP_PL__{gar}'].createOrReplaceTempView(f'CQS_UEP_PL__{gar}')
 
     _dfs[f'CQS_GEP_{gar}'] = spark.table(f'CQS_PPNA_{gar}_2')
     # type_pret rajouté au HY24 pour la cession
-    _dfs[f'CQS_GEP_{gar}'] = _dfs[f'CQS_GEP_{gar}'].select('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat2', 'Date_Rachat', 'Primes_{gar}', 'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret')
+    _dfs[f'CQS_GEP_{gar}'] = _dfs[f'CQS_GEP_{gar}'].select('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat2', 'Date_Rachat', f'Primes_{gar}', f'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret')
     _dfs[f'CQS_GEP_{gar}'].createOrReplaceTempView(f'CQS_GEP_{gar}')
 
     _dfs[f'CQS_GEP_{gar}'] = spark.table('CQS_GEP_{gar}').orderBy('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat', 'Primes_{gar}', 'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret')
@@ -219,12 +219,14 @@ def uep_cqs_78(gar, gar2):
     _dfs[f'CQS_UEP_PL__{gar}'] = spark.table('CQS_UEP_PL__{gar}').orderBy('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat', 'Primes_{gar}', 'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret')
     _dfs[f'CQS_UEP_PL__{gar}'].createOrReplaceTempView(f'CQS_UEP_PL__{gar}')
 
-    # PROC TRANSPOSE → PySpark pivot/unpivot
-    _dfs[f'CQS_GEP_{gar}_2'] = spark.table('CQS_GEP_{gar}').groupBy('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat', 'Primes_{gar}', 'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret').pivot('variable').agg(F.first(F.col('GEP_{gar}0')))
+    # PROC TRANSPOSE
+    # wide-to-long: 16 columns -> 16 rows (_NAME_ = column name, COL1 = value)
+    _dfs[f'CQS_GEP_{gar}_2'] = _dfs[f'CQS_GEP_{gar}'].select('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat', f'Primes_{gar}', f'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret', F.expr(f"""stack(16, 'GEP_{gar}0', `GEP_{gar}0`, 'GEP_{gar}1', `GEP_{gar}1`, 'GEP_{gar}2', `GEP_{gar}2`, 'GEP_{gar}3', `GEP_{gar}3`, 'GEP_{gar}4', `GEP_{gar}4`, 'GEP_{gar}5', `GEP_{gar}5`, 'GEP_{gar}6', `GEP_{gar}6`, 'GEP_{gar}7', `GEP_{gar}7`, 'GEP_{gar}8', `GEP_{gar}8`, 'GEP_{gar}9', `GEP_{gar}9`, 'GEP_{gar}10', `GEP_{gar}10`, 'GEP_{gar}11', `GEP_{gar}11`, 'GEP_{gar}12', `GEP_{gar}12`, 'GEP_{gar}13', `GEP_{gar}13`, 'GEP_{gar}14', `GEP_{gar}14`, 'GEP_{gar}15', `GEP_{gar}15`) as (_NAME_, COL1)"""))
     _dfs[f'CQS_GEP_{gar}_2'].createOrReplaceTempView(f'CQS_GEP_{gar}_2')
 
-    # PROC TRANSPOSE → PySpark pivot/unpivot
-    _dfs[f'CQS_UEP_PL__{gar}_2'] = spark.table('CQS_UEP_PL__{gar}').groupBy('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat', 'Primes_{gar}', 'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret').pivot('variable').agg(F.first(F.col('UEP_PL_{gar}0')))
+    # PROC TRANSPOSE
+    # wide-to-long: 16 columns -> 16 rows (_NAME_ = column name, COL1 = value)
+    _dfs[f'CQS_UEP_PL__{gar}_2'] = _dfs[f'CQS_UEP_PL__{gar}'].select('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat', f'Primes_{gar}', f'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret', F.expr(f"""stack(16, 'UEP_PL_{gar}0', `UEP_PL_{gar}0`, 'UEP_PL_{gar}1', `UEP_PL_{gar}1`, 'UEP_PL_{gar}2', `UEP_PL_{gar}2`, 'UEP_PL_{gar}3', `UEP_PL_{gar}3`, 'UEP_PL_{gar}4', `UEP_PL_{gar}4`, 'UEP_PL_{gar}5', `UEP_PL_{gar}5`, 'UEP_PL_{gar}6', `UEP_PL_{gar}6`, 'UEP_PL_{gar}7', `UEP_PL_{gar}7`, 'UEP_PL_{gar}8', `UEP_PL_{gar}8`, 'UEP_PL_{gar}9', `UEP_PL_{gar}9`, 'UEP_PL_{gar}10', `UEP_PL_{gar}10`, 'UEP_PL_{gar}11', `UEP_PL_{gar}11`, 'UEP_PL_{gar}12', `UEP_PL_{gar}12`, 'UEP_PL_{gar}13', `UEP_PL_{gar}13`, 'UEP_PL_{gar}14', `UEP_PL_{gar}14`, 'UEP_PL_{gar}15', `UEP_PL_{gar}15`) as (_NAME_, COL1)"""))
     _dfs[f'CQS_UEP_PL__{gar}_2'].createOrReplaceTempView(f'CQS_UEP_PL__{gar}_2')
 
     _dfs[f'CQS_UEP_PL__{gar}_3'] = spark.table(f'CQS_UEP_PL__{gar}_2')
@@ -258,7 +260,7 @@ def uep_cqs_78(gar, gar2):
          .when(F.col('Variable') == f"GEP_{gar2}13", F.col('Generation') + 13)
          .when(F.col('Variable') == f"GEP_{gar2}14", F.col('Generation') + 14)
          .when(F.col('Variable') == f"GEP_{gar2}15", F.col('Generation') + 15)
-         .otherwise(F.col('SURV')))
+         .otherwise(F.lit(None)  # no ELSE: null when false))
     )
     _dfs[f'CQS_GEP_{gar}_4'].createOrReplaceTempView(f'CQS_GEP_{gar}_4')
 
@@ -281,21 +283,21 @@ def uep_cqs_78(gar, gar2):
          .when(F.col('Variable') == f"UEP_PL_{gar2}13", F.col('Generation') + 13)
          .when(F.col('Variable') == f"UEP_PL_{gar2}14", F.col('Generation') + 14)
          .when(F.col('Variable') == f"UEP_PL_{gar2}15", F.col('Generation') + 15)
-         .otherwise(F.col('SURV')))
+         .otherwise(F.lit(None)  # no ELSE: null when false))
     )
     _dfs[f'CQS_UEP_PL__{gar}_4'].createOrReplaceTempView(f'CQS_UEP_PL__{gar}_4')
 
     _dfs[f'CQS_GEP_{gar}_5'] = spark.table(f'CQS_GEP_{gar}_4')
     _dfs[f'CQS_GEP_{gar}_5'] = (_dfs[f'CQS_GEP_{gar}_5']
-        .withColumn('Rachat', F.when(F.expr("""(year((Date_Rachat2))=SURV)"""), F.expr(f"""-Rachat_{gar}""")).otherwise(F.col('Rachat')))
-        .withColumn('GWP', F.when(F.expr("""(year((Date_dbt_Assce))=SURV)"""), F.expr(f"""Primes_{gar}""")).otherwise(F.col('GWP')))
+        .withColumn('Rachat', F.when(F.expr("""(year((Date_Rachat2))=SURV)"""), F.expr(f"""-Rachat_{gar}""")))  # no ELSE: null when condition is false
+        .withColumn('GWP', F.when(F.expr("""(year((Date_dbt_Assce))=SURV)"""), F.expr(f"""Primes_{gar}""")))  # no ELSE: null when condition is false
         .withColumn('GAR', F.when(F.expr(f"""{gar2}='IARD'"""), F.lit(30)).otherwise(F.lit(10)))
         .withColumn('IDEAN', F.when(F.expr(f"""{gar2}='IARD'"""), F.expr("""cast(concat("1"||substr(ID_Police,6,4)) as long)""")).otherwise(F.expr("""cast(concat("1"||substr(ID_Police,1,4)) as long)""")))
     )
     # type_pret rajouté au HY24 pour la cession
         # IF/THEN (manual review needed): if Rachat_{gar}=. then Rachat_{gar}=0
-    _dfs[f'CQS_GEP_{gar}_5'] = _dfs[f'CQS_GEP_{gar}_5'].filter(~F.expr("""SURV>year({date_val})"""))
-    _dfs[f'CQS_GEP_{gar}_5'] = _dfs[f'CQS_GEP_{gar}_5'].select('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat2', 'Date_Rachat', 'Primes_{gar}', 'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'SURV', 'GAR', 'GEP', 'GWP', 'Rachat', 'IDEAN', 'type_pret')
+    _dfs[f'CQS_GEP_{gar}_5'] = _dfs[f'CQS_GEP_{gar}_5'].filter(~F.expr(f"""SURV>year({date_val})"""))
+    _dfs[f'CQS_GEP_{gar}_5'] = _dfs[f'CQS_GEP_{gar}_5'].select('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat2', 'Date_Rachat', f'Primes_{gar}', f'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'SURV', 'GAR', 'GEP', 'GWP', 'Rachat', 'IDEAN', 'type_pret')
     _dfs[f'CQS_GEP_{gar}_5'].createOrReplaceTempView(f'CQS_GEP_{gar}_5')
 
     _dfs[f'CQS_UEP_PL__{gar}_5'] = spark.table(f'CQS_UEP_PL__{gar}_4')
@@ -304,8 +306,8 @@ def uep_cqs_78(gar, gar2):
         .withColumn('IDEAN', F.when(F.expr(f"""{gar2}='IARD'"""), F.expr("""cast(concat("1"||substr(ID_Police,6,4)) as long)""")).otherwise(F.expr("""cast(concat("1"||substr(ID_Police,1,4)) as long)""")))
     )
     # type_pret rajouté au HY24 pour la cession
-    _dfs[f'CQS_UEP_PL__{gar}_5'] = _dfs[f'CQS_UEP_PL__{gar}_5'].filter(~F.expr("""SURV>year({date_val})"""))
-    _dfs[f'CQS_UEP_PL__{gar}_5'] = _dfs[f'CQS_UEP_PL__{gar}_5'].select('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat2', 'Date_Rachat', 'Primes_{gar}', 'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'SURV', 'GAR', 'UEP_PL', 'IDEAN', 'type_pret')
+    _dfs[f'CQS_UEP_PL__{gar}_5'] = _dfs[f'CQS_UEP_PL__{gar}_5'].filter(~F.expr(f"""SURV>year({date_val})"""))
+    _dfs[f'CQS_UEP_PL__{gar}_5'] = _dfs[f'CQS_UEP_PL__{gar}_5'].select('Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'Date_Sin', 'Generation', 'Date_Rachat2', 'Date_Rachat', f'Primes_{gar}', f'Rachat_{gar}', 'Date_term', 'term', 'term_expoff', 'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'SURV', 'GAR', 'UEP_PL', 'IDEAN', 'type_pret')
     _dfs[f'CQS_UEP_PL__{gar}_5'].createOrReplaceTempView(f'CQS_UEP_PL__{gar}_5')
 
 
@@ -363,7 +365,7 @@ CQS_UEP_PL.write.mode('overwrite').saveAsTable(f'{{_catalog}}.cqs_out.CQS_UEP_PL
 # Taux de comm à demander en début de processus
 def import_excelx(datafile, out, onglet):
         _df_tmp = (spark.read.format('com.crealytics.spark.excel')
-            .option('sheetName', f'{onglet}')
+            .option('dataAddress', f'{onglet}!A1')
             .option('header', 'true')
             .load(datafile))
         _df_tmp.createOrReplaceTempView(out)
@@ -435,10 +437,10 @@ CQS_GEP_2.createOrReplaceTempView('CQS_GEP_2')
 
 CQS_GEP_2_bis = CQS_GEP_2
 CQS_GEP_2_bis = (CQS_GEP_2_bis
-    .withColumn('Taux_COM', F.when(F.expr("""Taux_COM IS NULL"""), F.lit(0)).otherwise(F.col('Taux_COM')))
-    .withColumn('Rachat', F.when(F.expr("""Rachat IS NULL"""), F.lit(0)).otherwise(F.col('Rachat')))
-    .withColumn('COM', F.when(F.expr("""COM IS NULL"""), F.lit(0)).otherwise(F.col('COM')))
-    .withColumn('GWP', F.when(F.expr("""GWP IS NULL"""), F.lit(0)).otherwise(F.col('GWP')))
+    .withColumn('Taux_COM', F.when(F.expr("""Taux_COM IS NULL"""), F.lit(0)))  # no ELSE: null when condition is false
+    .withColumn('Rachat', F.when(F.expr("""Rachat IS NULL"""), F.lit(0)))  # no ELSE: null when condition is false
+    .withColumn('COM', F.when(F.expr("""COM IS NULL"""), F.lit(0)))  # no ELSE: null when condition is false
+    .withColumn('GWP', F.when(F.expr("""GWP IS NULL"""), F.lit(0)))  # no ELSE: null when condition is false
     .withColumn('COM', F.expr("""GWP*Taux_COM"""))
     .withColumn('COM_Rachat', F.expr("""Rachat*Taux_COM"""))
     .withColumn('COM_NetLapse', F.col('COM') + F.col('COM_Rachat'))
@@ -460,7 +462,7 @@ CQS_UEP_PL_2.createOrReplaceTempView('CQS_UEP_PL_2')
 
 CQS_UEP_PL_2_bis = CQS_UEP_PL_2
 CQS_UEP_PL_2_bis = (CQS_UEP_PL_2_bis
-    .withColumn('Taux_COM', F.when(F.expr("""Taux_COM IS NULL"""), F.lit(0)).otherwise(F.col('Taux_COM')))
+    .withColumn('Taux_COM', F.when(F.expr("""Taux_COM IS NULL"""), F.lit(0)))  # no ELSE: null when condition is false
     .withColumn('DAC', F.expr("""UEP_PL*Taux_COM"""))
 )
 CQS_UEP_PL_2_bis.createOrReplaceTempView('CQS_UEP_PL_2_bis')
@@ -524,7 +526,7 @@ CQS_UEP_GEN_SURV.createOrReplaceTempView('CQS_UEP_GEN_SURV')
 CQS_UEP_GEN_SURV.write.mode('overwrite').saveAsTable(f'{{_catalog}}.cqs_out.CQS_UEP_GEN_SURV')
 
 def export_excel(database, datatable, sheet):
-    datatable.write.format('com.crealytics.spark.excel').option('sheetName', f'{sheet}').option('header', 'true').mode('overwrite').save(database)
+    datatable.write.format('com.crealytics.spark.excel').option('dataAddress', f'{sheet}!A1').option('header', 'true').mode('overwrite').save(database)
 
 
 export_01 = f"~/NAS/{lreseau}/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_techniques/Macao/CQS CBP Process/02 - GEP/Output_CQS.xlsx"
@@ -648,8 +650,8 @@ COM_DAC = COM_DAC_10 \
     .union(COM_DAC_30)
 COM_DAC.createOrReplaceTempView('COM_DAC')
 
-export_excelx(database=export_xx, datatable=EP, sheet=f"GEP")
-export_excelx(database=export_xx, datatable=COM_DAC, sheet="COM")
+export_excelx(database=export_xx, datatable=EP, sheet=f"GEP )
+%EXPORT_EXCELX(DATABASE={export_xx}", datatable=COM_DAC, sheet="COM")
 # == On recupère ici les durations moyennes/ Pour le process de création de la base MP  -- Janv 2023 ==
 duration_cqs_cbp = cqs_gep_iard_5 \
     .union(cqs_gep_vie_5)
