@@ -104,7 +104,7 @@ def prepa_table(table_gwp, table_claims):
     Table_CQS_MeF_1 = Table_CQS_MeF_1.drop('date_dbt_assce', 'date_dbt_trait', 'date_decla', 'date_embauche', 'date_fin_assce', 'date_liquid', 'date_naiss_assre', 'date_rachat', 'date_recep', 'date_refus_2', 'date_resultat', 'date_signature', 'date_sin')
     Table_CQS_MeF_1.createOrReplaceTempView('Table_CQS_MeF_1')
 
-    Table_CQS_MeF_1b = Table_CQS_MeF_1
+    Table_CQS_MeF_1b = spark.table('Table_CQS_MeF_1')
     Table_CQS_MeF_1b = (Table_CQS_MeF_1b
         .withColumn('date_dbt_assce', F.col('date_dbt_assce2'))
         .withColumn('date_dbt_trait', F.col('date_dbt_trait2'))
@@ -136,7 +136,7 @@ def prepa_table(table_gwp, table_claims):
     Table_CQS_MeF_1b = Table_CQS_MeF_1b.drop('date_dbt_assce2', 'date_dbt_trait2', 'date_decla2', 'date_embauche2', 'date_fin_assce2', 'date_liquid2', 'date_naiss_assre2', 'date_rachat2', 'date_recep2', 'date_refus_22', 'date_resultat2', 'date_signature2', 'date_sin2')
     Table_CQS_MeF_1b.createOrReplaceTempView('Table_CQS_MeF_1b')
 
-    Table_CQS_MeF_2 = Table_CQS_MeF_1b
+    Table_CQS_MeF_2 = spark.table('Table_CQS_MeF_1b')
     Table_CQS_MeF_2 = Table_CQS_MeF_2.filter(F.expr(f"""year({variable_cut})<{year_cut} AND FichOrigAdh != 'ST'"""))
     Table_CQS_MeF_2 = (Table_CQS_MeF_2
         .withColumn('Primes_VIE', F.col('Prime_Vie_Brute'))
@@ -161,7 +161,7 @@ def prepa_table(table_gwp, table_claims):
 
 prepa_table(table_gwp=table_gwp, table_claims=table_claims)
 def uep_cqs_78(gar, gar2):
-    _dfs[f'CQS_PPNA_{gar}'] = Table_CQS_MeF_2
+    _dfs[f'CQS_PPNA_{gar}'] = spark.table('Table_CQS_MeF_2')
     _dfs[f'CQS_PPNA_{gar}'] = _dfs[f'CQS_PPNA_{gar}'].filter(F.expr(f"""Primes_{gar} IS NOT NULL"""))
     # type_pret rajouté au HY24 pour la cession
     _dfs[f'CQS_PPNA_{gar}'] = _dfs[f'CQS_PPNA_{gar}'].select('ID_Adh', 'Financiere_Adh', 'ID_Police', 'sit_prof_1', 'generation', 'Date_Dbt_Assce', 'Date_Fin_Assce', 'date_rachat', 'date_sin', f'Primes_{gar}', f'Rachat_{gar}', 'type_pret')
@@ -359,8 +359,8 @@ def creer_table(gar):
 
 creer_table(gar="iard")
 creer_table(gar="vie")
-CQS_GEP = CQS_GEP_iard_6 \
-    .union(CQS_GEP_VIE_6)
+CQS_GEP = spark.table('CQS_GEP_iard_6') \
+    .union(spark.table('CQS_GEP_VIE_6'))
 CQS_GEP = (CQS_GEP
     .withColumn('idean2', F.col('idean'))
 )
@@ -369,11 +369,11 @@ CQS_GEP = CQS_GEP.drop('idean')
 CQS_GEP = CQS_GEP.withColumnRenamed('idean2', 'idean')
 CQS_GEP.createOrReplaceTempView('CQS_GEP')
 
-CQS_UEP_PL = CQS_UEP_PL__iard_6 \
-    .union(CQS_UEP_PL__VIE_6)
+CQS_UEP_PL = spark.table('CQS_UEP_PL__iard_6') \
+    .union(spark.table('CQS_UEP_PL__VIE_6'))
 CQS_UEP_PL.createOrReplaceTempView('CQS_UEP_PL')
 
-CQS_UEP_PL = CQS_UEP_PL
+CQS_UEP_PL = spark.table('CQS_UEP_PL')
 CQS_UEP_PL = (CQS_UEP_PL
     .withColumn('idean_char', F.col('idean').cast('string'))
 )
@@ -381,12 +381,12 @@ CQS_UEP_PL = CQS_UEP_PL.drop('idean')
 CQS_UEP_PL = CQS_UEP_PL.withColumnRenamed('idean_char', 'idean')
 CQS_UEP_PL.createOrReplaceTempView('CQS_UEP_PL')
 
-CQS_GEP = CQS_GEP
+CQS_GEP = spark.table('CQS_GEP')
 CQS_GEP.createOrReplaceTempView('CQS_GEP')
 # LIBNAME CQS_out -> Unity Catalog: {_catalog}.cqs_out
 CQS_GEP.write.mode('overwrite').saveAsTable(f'{{_catalog}}.cqs_out.CQS_GEP')
 
-CQS_UEP_PL = CQS_UEP_PL
+CQS_UEP_PL = spark.table('CQS_UEP_PL')
 CQS_UEP_PL.createOrReplaceTempView('CQS_UEP_PL')
 # LIBNAME CQS_OUT -> Unity Catalog: {_catalog}.cqs_out
 CQS_UEP_PL.write.mode('overwrite').saveAsTable(f'{{_catalog}}.cqs_out.CQS_UEP_PL')
@@ -406,7 +406,7 @@ def import_excelx(datafile, out, onglet):
 chemin_imp = f"~/NAS/{lreseau}/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_techniques/Macao/CQS CBP Process/00 - Documents et parametres/20250918_Commission_Life_NoLife_2025.xlsx"
 input_ = chemin_imp
 import_excelx(datafile=input_, out="Tx_COM_input", onglet="CQS Commissions")
-Tx_COM_input_2 = Tx_COM_input
+Tx_COM_input_2 = spark.table('Tx_COM_input')
 Tx_COM_input_2 = Tx_COM_input_2.filter(F.col('ID_Police').isNotNull())
 Tx_COM_input_2.createOrReplaceTempView('Tx_COM_input_2')
 
@@ -421,7 +421,7 @@ from Tx_COM_input_2
 group by Financiere_Adh,generation,Sit_Prof_1,ID_Police """)
 Taux_COM_CQS_VIE_0.createOrReplaceTempView('Taux_COM_CQS_VIE_0')
 
-Taux_COM_CQS_VIE = Taux_COM_CQS_VIE_0
+Taux_COM_CQS_VIE = spark.table('Taux_COM_CQS_VIE_0')
 Taux_COM_CQS_VIE = (Taux_COM_CQS_VIE
     .withColumn('GAR', F.lit(10))
     .withColumn('IDEAN', F.expr("""cast(concat("1"||substring(ID_Police,1,4)) as long)"""))
@@ -439,19 +439,19 @@ from Tx_COM_input_2
 group by Financiere_Adh,Generation,Sit_Prof_1,ID_Police """)
 Taux_COM_CQS_IARD_0.createOrReplaceTempView('Taux_COM_CQS_IARD_0')
 
-Taux_COM_CQS_IARD = Taux_COM_CQS_IARD_0
+Taux_COM_CQS_IARD = spark.table('Taux_COM_CQS_IARD_0')
 Taux_COM_CQS_IARD = (Taux_COM_CQS_IARD
     .withColumn('GAR', F.lit(30))
     .withColumn('IDEAN', F.expr("""cast(concat("1"||substring(ID_Police,6,4)) as long)"""))
 )
 Taux_COM_CQS_IARD.createOrReplaceTempView('Taux_COM_CQS_IARD')
 
-work = Taux_COM_CQS_VIE \
-    .union(Taux_COM_CQS_IARD)
+work = spark.table('Taux_COM_CQS_VIE') \
+    .union(spark.table('Taux_COM_CQS_IARD'))
 # CQS_Out.
 work.createOrReplaceTempView('work')
 
-Taux_COM = Taux_COM_CQS
+Taux_COM = spark.table('Taux_COM_CQS')
 Taux_COM = (Taux_COM
     .withColumn('idean_char', F.col('idean').cast('string'))
 )
@@ -467,7 +467,7 @@ CQS_GEP_2 = spark.sql("""select A.*,
 	regexp_replace(A.IDEAN, ' ', '')=regexp_replace(B.IDEAN, ' ', '') """)
 CQS_GEP_2.createOrReplaceTempView('CQS_GEP_2')
 
-CQS_GEP_2_bis = CQS_GEP_2
+CQS_GEP_2_bis = spark.table('CQS_GEP_2')
 CQS_GEP_2_bis = (CQS_GEP_2_bis
     .withColumn('Taux_COM', F.when(F.expr("""Taux_COM IS NULL"""), F.lit(0)))  # no ELSE: null when condition is false
     .withColumn('Rachat', F.when(F.expr("""Rachat IS NULL"""), F.lit(0)))  # no ELSE: null when condition is false
@@ -480,7 +480,7 @@ CQS_GEP_2_bis = (CQS_GEP_2_bis
 )
 CQS_GEP_2_bis.createOrReplaceTempView('CQS_GEP_2_bis')
 
-work = CQS_GEP_2_bis
+work = spark.table('CQS_GEP_2_bis')
 # cqs_out.
 work.createOrReplaceTempView('work')
 
@@ -492,7 +492,7 @@ CQS_UEP_PL_2 = spark.sql("""select A.*,
 		A.Sit_Prof_1 = B.Sit_Prof_1 and A.ID_Police =B.ID_Police and A.GAR=B.GAR  and A.IDEAN=B.IDEAN """)
 CQS_UEP_PL_2.createOrReplaceTempView('CQS_UEP_PL_2')
 
-CQS_UEP_PL_2_bis = CQS_UEP_PL_2
+CQS_UEP_PL_2_bis = spark.table('CQS_UEP_PL_2')
 CQS_UEP_PL_2_bis = (CQS_UEP_PL_2_bis
     .withColumn('Taux_COM', F.when(F.expr("""Taux_COM IS NULL"""), F.lit(0)))  # no ELSE: null when condition is false
     .withColumn('DAC', F.expr("""UEP_PL*Taux_COM"""))
@@ -536,21 +536,21 @@ where surv not = {n}
 group by IDEAN, GAR, SURV,type_pret,generation """)
 CQS_GEP_3.createOrReplaceTempView('CQS_GEP_3')
 
-CQS_GEP_3 = CQS_GEP_3
+CQS_GEP_3 = spark.table('CQS_GEP_3')
 CQS_GEP_3 = CQS_GEP_3.filter(~F.expr("""idean IS NULL"""))
 CQS_GEP_3 = CQS_GEP_3.filter(~F.expr("""idean=1"""))
 CQS_GEP_3.createOrReplaceTempView('CQS_GEP_3')
 # LIBNAME CQS_Out -> Unity Catalog: {_catalog}.cqs_out
 CQS_GEP_3.write.mode('overwrite').saveAsTable(f'{{_catalog}}.cqs_out.CQS_GEP_3')
 
-CQS_UEP_PL_3 = CQS_UEP_PL_3
+CQS_UEP_PL_3 = spark.table('CQS_UEP_PL_3')
 CQS_UEP_PL_3 = CQS_UEP_PL_3.filter(~F.expr("""idean IS NULL"""))
 CQS_UEP_PL_3 = CQS_UEP_PL_3.filter(~F.expr("""idean=1"""))
 CQS_UEP_PL_3.createOrReplaceTempView('CQS_UEP_PL_3')
 # LIBNAME CQS_Out -> Unity Catalog: {_catalog}.cqs_out
 CQS_UEP_PL_3.write.mode('overwrite').saveAsTable(f'{{_catalog}}.cqs_out.CQS_UEP_PL_3')
 
-CQS_UEP_GEN_SURV = CQS_UEP_GEN_SURV
+CQS_UEP_GEN_SURV = spark.table('CQS_UEP_GEN_SURV')
 CQS_UEP_GEN_SURV = CQS_UEP_GEN_SURV.filter(~F.expr("""idean IS NULL"""))
 CQS_UEP_GEN_SURV = CQS_UEP_GEN_SURV.filter(~F.expr("""idean=1"""))
 CQS_UEP_GEN_SURV.createOrReplaceTempView('CQS_UEP_GEN_SURV')
@@ -566,10 +566,10 @@ export_excel(datatable="cqs_out.cqs_gep_3", database=export_01, sheet="GEP")
 export_excel(datatable="cqs_out.cqs_gep_2_bis", database=export_01, sheet="Détail")
 export_excel(datatable="cqs_out.cqs_uep_pl_3", database=export_01, sheet="UEP")
 # /
-GEP = cqs_gep_3
+GEP = spark.table('cqs_gep_3')
 GEP.createOrReplaceTempView('GEP')
 
-UEP = cqs_uep_pl_3
+UEP = spark.table('cqs_uep_pl_3')
 UEP.createOrReplaceTempView('UEP')
 
 # Garantie 10
@@ -608,7 +608,7 @@ GLS_10 = spark.table('GLS_10').orderBy('annee')
 GLS_10.createOrReplaceTempView('GLS_10')
 
 # MERGE: LEFT JOIN  (if a  - keep all from left)
-EP_10 = EP_10_.join(GLS_10, ['annee'], 'left')
+EP_10 = spark.table('EP_10_').join(spark.table('GLS_10'), ['annee'], 'left')
 EP_10 = (EP_10
     .withColumn('GEP', F.expr("""(coalesce(Ep, 0) + coalesce(Stop_Loss, 0))"""))
 )
@@ -659,7 +659,7 @@ GLS_30 = spark.table('GLS_30').orderBy('annee')
 GLS_30.createOrReplaceTempView('GLS_30')
 
 # MERGE: LEFT JOIN  (if a  - keep all from left)
-EP_30 = EP_30_.join(GLS_30, ['annee'], 'left')
+EP_30 = spark.table('EP_30_').join(spark.table('GLS_30'), ['annee'], 'left')
 EP_30 = (EP_30
     .withColumn('GEP', F.expr("""(coalesce(Ep, 0) + coalesce(Stop_Loss, 0))"""))
 )
@@ -674,19 +674,19 @@ from EP1 a left join EP2 b on
 A.annee =B.annee""")
 COM_DAC_30.createOrReplaceTempView('COM_DAC_30')
 
-EP = EP_10 \
-    .union(Ep_30)
+EP = spark.table('EP_10') \
+    .union(spark.table('Ep_30'))
 EP.createOrReplaceTempView('EP')
 
-COM_DAC = COM_DAC_10 \
-    .union(COM_DAC_30)
+COM_DAC = spark.table('COM_DAC_10') \
+    .union(spark.table('COM_DAC_30'))
 COM_DAC.createOrReplaceTempView('COM_DAC')
 
 export_excelx(database=export_xx, datatable=EP, sheet=f"GEP )
 %EXPORT_EXCELX(DATABASE={export_xx}", datatable=COM_DAC, sheet="COM")
 # == On recupère ici les durations moyennes/ Pour le process de création de la base MP  -- Janv 2023 ==
-duration_cqs_cbp = cqs_gep_iard_5 \
-    .union(cqs_gep_vie_5)
+duration_cqs_cbp = spark.table('cqs_gep_iard_5') \
+    .union(spark.table('cqs_gep_vie_5'))
 duration_cqs_cbp = duration_cqs_cbp.filter(~F.expr("""GEP =0"""))
 duration_cqs_cbp = duration_cqs_cbp.select('Financiere_Adh', 'date_dbt_assce', 'date_fin_assce', 'term', 'GAR', 'IDEAN', 'GEP')
 duration_cqs_cbp.createOrReplaceTempView('duration_cqs_cbp')
@@ -698,7 +698,7 @@ duration_cqs_cbp.createOrReplaceTempView('duration_cqs_cbp')
 duration_cqs_cbp_moy = duration_cqs_cbp.groupBy('IDEAN', 'GAR', 'Financiere_Adh').agg(F.sum('term').alias('term'))
 duration_cqs_cbp_moy.createOrReplaceTempView('duration_cqs_cbp_moy')
 
-duration_moy_cqs_cbp = duration_cqs_cbp_moy
+duration_moy_cqs_cbp = spark.table('duration_cqs_cbp_moy')
 duration_moy_cqs_cbp.createOrReplaceTempView('duration_moy_cqs_cbp')
 # LIBNAME cqs_out -> Unity Catalog: {_catalog}.cqs_out
 duration_moy_cqs_cbp.write.mode('overwrite').saveAsTable(f'{{_catalog}}.cqs_out.duration_moy_cqs_cbp')
