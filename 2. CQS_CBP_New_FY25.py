@@ -191,16 +191,48 @@ def uep_cqs_78(gar, gar2):
     _dfs[f'CQS_PPNA_{gar}_2'].createOrReplaceTempView(f'CQS_PPNA_{gar}_2')
 
     _dfs[f'CQS_PPNA_{gar}_2'] = spark.table(f'CQS_PPNA_{gar}_2')
+    _dfs[f'CQS_PPNA_{gar}_2'] = (_dfs[f'CQS_PPNA_{gar}_2']
+        .withColumn(f'GEP_{gar}0', F.expr(f"""Primes_{gar} - UEP_{gar}0"""))
+        .withColumn(f'UEP_PL_{gar}0', F.expr(f"""UEP_{gar}0"""))
+    )
         # IF/THEN (manual review needed): if term_expoff>Mois_fin_annee then UEP_{gar}0 = (term-Mois_fin_annee)*(term-Mois_fin_annee+1)/(term*(term+1))*Primes_{gar}
-    # ? %do i=1 %to 15
-    # ? UEP_{gar}{i}=0
+        # ===== MANUAL REVIEW REQUIRED: macro code inside DATA step =====
+        # The following SAS uses a macro %do/%let loop to generate
+        # indexed columns at compile time. Translate by hand using a
+        # Python for-loop with df.withColumn(f'col_{i}', ...).
+        # SAS: %do i=1 %to 15
+        # ==============================================================
+        # MANUAL REVIEW: indexed column from macro loop — use df.withColumn(f'UEP_{gar}{i}', ...) inside a Python for-loop
+        # SAS: UEP_{gar}{i}=0
         # IF/THEN (manual review needed): if (year(date_sin)=< {i}+Generation and Date_term=Date_sin) then UEP_{gar}{i}=0
-    # ? GEP_{gar}0 = Primes_{gar} - UEP_{gar}0
-    # ? UEP_PL_{gar}0 = UEP_{gar}0
-    # ? %do i=1 %to 15
-    # ? %let j = %eval({i}-1)
-    # ? GEP_{gar}{i} = UEP_{gar}{j} - UEP_{gar}{i}
-    # ? UEP_PL_{gar}{i} = UEP_{gar}{i} - UEP_{gar}{j}
+        # ===== MANUAL REVIEW REQUIRED: macro code inside DATA step =====
+        # The following SAS uses a macro %do/%let loop to generate
+        # indexed columns at compile time. Translate by hand using a
+        # Python for-loop with df.withColumn(f'col_{i}', ...).
+        # SAS: %end
+        # ==============================================================
+        # ===== MANUAL REVIEW REQUIRED: macro code inside DATA step =====
+        # The following SAS uses a macro %do/%let loop to generate
+        # indexed columns at compile time. Translate by hand using a
+        # Python for-loop with df.withColumn(f'col_{i}', ...).
+        # SAS: %do i=1 %to 15
+        # ==============================================================
+        # ===== MANUAL REVIEW REQUIRED: macro code inside DATA step =====
+        # The following SAS uses a macro %do/%let loop to generate
+        # indexed columns at compile time. Translate by hand using a
+        # Python for-loop with df.withColumn(f'col_{i}', ...).
+        # SAS: %let j = %eval({i}-1)
+        # ==============================================================
+        # MANUAL REVIEW: indexed column from macro loop — use df.withColumn(f'GEP_{gar}{i}', ...) inside a Python for-loop
+        # SAS: GEP_{gar}{i} = UEP_{gar}{j} - UEP_{gar}{i}
+        # MANUAL REVIEW: indexed column from macro loop — use df.withColumn(f'UEP_PL_{gar}{i}', ...) inside a Python for-loop
+        # SAS: UEP_PL_{gar}{i} = UEP_{gar}{i} - UEP_{gar}{j}
+        # ===== MANUAL REVIEW REQUIRED: macro code inside DATA step =====
+        # The following SAS uses a macro %do/%let loop to generate
+        # indexed columns at compile time. Translate by hand using a
+        # Python for-loop with df.withColumn(f'col_{i}', ...).
+        # SAS: %end
+        # ==============================================================
     _dfs[f'CQS_PPNA_{gar}_2'].createOrReplaceTempView(f'CQS_PPNA_{gar}_2')
 
     _dfs[f'CQS_UEP_PL__{gar}'] = spark.table(f'CQS_PPNA_{gar}_2')
