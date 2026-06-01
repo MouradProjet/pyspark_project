@@ -192,10 +192,19 @@ def uep_cqs_78(gar, gar2):
 
     _dfs[f'CQS_PPNA_{gar}_2'] = spark.table(f'CQS_PPNA_{gar}_2')
     _dfs[f'CQS_PPNA_{gar}_2'] = (_dfs[f'CQS_PPNA_{gar}_2']
+        .withColumn(f'UEP_{gar}0',
+            F.when(F.expr("""term_expoff>Mois_fin_annee"""), F.expr(f"""(term-Mois_fin_annee)*(term-Mois_fin_annee+1)/(term*(term+1))*Primes_{gar}"""))
+             .when(F.expr("""(year(date_sin)<= Generation AND Date_term=Date_sin)"""), F.lit(0))
+             .when(F.expr("""(year(date_rachat2)<= Generation AND Date_term=date_rachat2)"""), F.lit(0))
+             .otherwise(F.expr(f"""(term-term_expoff)*(term-term_expoff+1)/(term*(term+1))*Primes_{gar}""")))
+        .withColumn(f'UEP_{gar}{i}',
+            F.when(F.expr(f"""(year(date_sin)<= {i}+Generation AND Date_term=Date_sin)"""), F.lit(0))
+             .when(F.expr(f"""(year(date_rachat2)<= {i}+Generation AND Date_term=date_rachat2)"""), F.lit(0))
+             .when(F.expr(f"""(term_expoff-Mois_fin_annee)>{i}*12"""), F.expr(f"""(term - Mois_fin_annee -{i}*12)*(term - Mois_fin_annee -{i}*12+1)/((term+1)*term)*Primes_{gar}"""))
+             .otherwise(F.expr(f"""(term-term_expoff)*(term-term_expoff+1)/(term*(term+1))*Primes_{gar}""")))
         .withColumn(f'GEP_{gar}0', F.expr(f"""Primes_{gar} - UEP_{gar}0"""))
         .withColumn(f'UEP_PL_{gar}0', F.expr(f"""UEP_{gar}0"""))
     )
-        # IF/THEN (manual review needed): if term_expoff>Mois_fin_annee then UEP_{gar}0 = (term-Mois_fin_annee)*(term-Mois_fin_annee+1)/(term*(term+1))*Primes_{gar}
         # ===== MANUAL REVIEW REQUIRED: macro code inside DATA step =====
         # The following SAS uses a macro %do/%let loop to generate
         # indexed columns at compile time. Translate by hand using a
@@ -204,7 +213,6 @@ def uep_cqs_78(gar, gar2):
         # ==============================================================
         # MANUAL REVIEW: indexed column from macro loop — use df.withColumn(f'UEP_{gar}{i}', ...) inside a Python for-loop
         # SAS: UEP_{gar}{i}=0
-        # IF/THEN (manual review needed): if (year(date_sin)=< {i}+Generation and Date_term=Date_sin) then UEP_{gar}{i}=0
         # ===== MANUAL REVIEW REQUIRED: macro code inside DATA step =====
         # The following SAS uses a macro %do/%let loop to generate
         # indexed columns at compile time. Translate by hand using a
