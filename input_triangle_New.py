@@ -46,7 +46,7 @@ import_excelx(datafile=import_xx1, out="GEP", onglet="GEP")
 Claims_actuals = spark.table('cbp_italy_policies_claims_1125')
 Claims_actuals = Claims_actuals.filter(F.expr(f"""(Montant_Sin IS NOT NULL AND Etat IN ("DA LIQUIDARE","LIQUIDATO","liquidato","IN LAVORAZIONE") AND Annee_Sin<{year_lim})"""))
 Claims_actuals = (Claims_actuals
-    .withColumn('Annee_Sin', F.when(F.expr("""Annee_Sin IS NULL"""), F.expr("""year(datepart(date_liquid))""")))  # no ELSE: null when condition is false
+    .withColumn('Annee_Sin', F.when(F.expr("""Annee_Sin IS NULL"""), F.expr("""year(to_date(date_liquid))""")))  # no ELSE: null when condition is false
 )
 # Attention, à modifier à chaque arrêté
 # Modification AJ V220 : ajout du "datepart" à cause du changement de format. Vérifier qu'il y en a toujours besoin, sinon supprimer.
