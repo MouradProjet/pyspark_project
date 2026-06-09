@@ -122,6 +122,42 @@ split_cess_inforce("RGA", "0.45")
 split_cess_inforce("SCOR", "0.1")
 split_cess_inforce("ARCH", "0.05")
 # TRAITE REASS GENERATION 2023---> 2025
+
+def split_cess_inforce(cess, taux):
+    df = spark.table('donnees_py')
+
+    # The three blocks are mutually exclusive on (generation, type_pret, gar).
+    # A row is kept only if it matches one of them (explicit OUTPUT suppresses
+    # the default, so non-matching rows are dropped).
+    block1 = F.expr("generation <= 2022 AND type_pret NOT IN ('CQP')")
+    block2 = F.expr("generation <= 2018 AND type_pret = 'CQP'")
+    block3 = F.expr("2019 <= generation AND generation <= 2022 AND type_pret = 'CQP' AND gar = 30")
+
+    df = df.filter(block1 | block2 | block3)
+
+    # cess depends on poste; the formula differs slightly per block.
+    # Block 1 PPNA factor is 0.96*taux; blocks 2&3 are taux*0.96 (same value).
+    # PSAP in all blocks: only when surv > 2022, value -montant*taux.
+    df = df.withColumn('cess',
+        # PPNA rows (any block) → -montant * 0.96 * taux
+        F.when(F.col('poste') == 'PPNA', -F.col('montant') * 0.96 * taux)
+        # PSAP rows with surv > 2022 → -montant * taux
+         .when((F.col('poste') == 'PSAP') & (F.col('surv') > 2022), -F.col('montant') * taux)
+        # everything else stays null (SAS: cess = . , never overwritten)
+    )
+
+    df = df.withColumn('code_cess', F.lit(cess))
+    df.createOrReplaceTempView(f'cess_py_traite_inforce_{cess}')
+    return df
+
+
+split_cess_inforce(cess="MAPFRE", taux=0.09)
+split_cess_inforce(cess="RGA",    taux=0.45)
+split_cess_inforce(cess="SCOR",   taux=0.1)
+split_cess_inforce(cess="ARCH",   taux=0.05)
+
+
+
 def split_cess_newb(cess, taux):
     _dfs[f'cess_py_newb_{cess}'] = spark.table('donnees_py')
     _dfs[f'cess_py_newb_{cess}'] = _dfs[f'cess_py_newb_{cess}'].filter(F.expr("""2023<=generation<2026"""))
