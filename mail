@@ -1,5 +1,10 @@
-Bonjour,
 
+sc._jvm.shadeio.poi.util.IOUtils.setByteArrayMaxOverride(1_000_000_000)
+
+df = (spark.read.format('com.crealytics.spark.excel')
+      .option('dataAddress', "'CQS Commissions'!A1")
+      .option('header', 'true')
+      .load(datafile))
 Suite à notre point d’hier, je souhaitais te faire un retour sur l’avancement de mes tests ainsi que sur le principal point de blocage identifié.
 
 Pour poursuivre les validations, j’ai besoin d’accéder aux données sources actuellement disponibles aux formats SAS (sas7bdat) et WPD.
