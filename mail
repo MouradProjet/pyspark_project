@@ -1,4 +1,11 @@
+def import_excelx(datafile, out, onglet):
+    import pandas as pd
+    pdf = pd.read_excel(datafile, sheet_name=onglet, engine='openpyxl')
+    df = spark.createDataFrame(pdf)
+    df.createOrReplaceTempView(out)
 
+# Vos appels existants ne changent pas :
+import_excelx(datafile=chemin_imp, out="Tx_COM_input", onglet="CQS Commissions")
 sc._jvm.shadeio.poi.util.IOUtils.setByteArrayMaxOverride(1_000_000_000)
 
 df = (spark.read.format('com.crealytics.spark.excel')
