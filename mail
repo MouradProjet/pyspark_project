@@ -1,0 +1,21 @@
+Bonjour,
+
+Suite à notre point d’hier, je souhaitais te faire un retour sur l’avancement de mes tests ainsi que sur le principal point de blocage identifié.
+
+Pour poursuivre les validations, j’ai besoin d’accéder aux données sources actuellement disponibles aux formats SAS (sas7bdat) et WPD.
+
+À ce stade, deux solutions sont envisageables :
+
+1. Copie des données vers Azure Storage
+L’idée serait de copier manuellement les fichiers dans Azure Storage afin de les exploiter depuis Databricks. Cependant, cette solution est actuellement bloquée car je ne dispose pas des droits nécessaires pour installer la librairie Python requise sur le cluster Databricks afin de lire les fichiers SAS (sas7bdat). Par ailleurs, Ikram étant absente depuis le début de la semaine, je n’ai pas pu obtenir son aide sur ce sujet.
+
+2. Extraction des données dans un format exploitable par PySpark
+Une autre possibilité serait d’extraire les mêmes données SAS dans un format directement lisible par PySpark, comme par exemple du CSV (ou tout autre format compatible). Cette solution me permettrait de poursuivre les tests sans dépendre de l’installation de librairies supplémentaires sur le cluster.
+
+À ce stade, la deuxième option me semble être la plus rapide pour débloquer les travaux et avancer sur les tests.
+
+N’hésite pas à me dire quelle solution te paraît la plus adaptée ou si une autre approche est envisageable.
+
+Merci d’avance pour ton retour.
+
+Cordialement,
