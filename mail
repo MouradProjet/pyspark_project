@@ -1,3 +1,10 @@
+df = spark.read \
+    .option("header", "true") \
+    .option("sep", ";") \
+    .option("encoding", "ISO-8859-1") \   # accents é è à preserved
+    .option("inferSchema", "true") \
+    .csv("/Volumes/actuariat_dev/cqs/sources/export_wps.csv")
+
 def import_excelx(datafile, out, onglet):
     import pandas as pd
     pdf = pd.read_excel(datafile, sheet_name=onglet, engine='openpyxl')
