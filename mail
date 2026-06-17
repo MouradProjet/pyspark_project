@@ -1,3 +1,6 @@
+.withColumn('IDEAN_2',
+    F.expr("""concat('1', regexp_replace(Macao_Group_Policy, ' ', ''))"""))
+
 df = spark.read \
     .option("header", "true") \
     .option("sep", ";") \
