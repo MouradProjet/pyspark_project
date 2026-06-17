@@ -1,3 +1,6 @@
+
+pdf.columns = pdf.columns.str.strip().str.replace(r'\s+', '_', regex=True)
+df = spark.createDataFrame(pdf)
 .withColumn('IDEAN_2',
     F.expr("""concat('1', regexp_replace(Macao_Group_Policy, ' ', ''))"""))
 
