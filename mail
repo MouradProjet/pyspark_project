@@ -1,3 +1,7 @@
+	keep N_RPP_RPTG COASS_ACCEPT IDEAN1 CONTRAT_RPTG RAISON_SOCIALE_RPTG PARTENAIRE_RPTG /*PMP_Sales_Name*/ PRODUIT_RPTG SS_PRODUIT_RPTG PAP_Product PAYS_RPTG PU_PP_RPTG CREDITOR_O_N_RPTG
+	       SI RPP IDEAN_ Macao_Group_Policy
+	     ;
+
 
 pdf.columns = pdf.columns.str.strip().str.replace(r'\s+', '_', regex=True)
 df = spark.createDataFrame(pdf)
