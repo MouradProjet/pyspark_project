@@ -1,3 +1,49 @@
+N = 2025
+
+# ── PROC TRANSPOSE — wide-to-long sur courant et ca ──────────────────
+by_cols = ['typaff', 'typidean', 'idean', 'gar', 'poste', 'niveau',
+           'cess', 'country', 'Entity', 'DEVISE']
+
+stock = spark.table('t_stock').select(
+    *by_cols,
+    F.expr("stack(2, 'courant', courant, 'ca', ca) as (_NAME_, COL1)")
+)
+stock.createOrReplaceTempView('stock')
+
+# ── DATA stock — enrichissement + SURV selon _NAME_ ──────────────────
+stock = (spark.table('stock')
+    .withColumn('VUE', F.lit(f'SSI_CLOT{N}'))
+    # if _Name_="courant" then SURV=N; else SURV=N-1
+    .withColumn('SURV',
+        F.when(F.col('_NAME_') == 'courant', F.lit(N)).otherwise(F.lit(N - 1)))
+    .withColumnRenamed('COL1', 'MONTANT')
+    .drop('_NAME_')
+    .withColumn('NIVEAU', F.lit('T'))
+    .withColumn('CPTA', F.lit(N))
+    .withColumn('SOURCE', F.lit('CQS CBP'))
+)
+stock.createOrReplaceTempView('stock')
+
+# ── PROC SQL — agrégation finale ─────────────────────────────────────
+stock = spark.sql("""
+    select TYPAFF, TYPIDEAN, IDEAN, GAR, POSTE, NIVEAU, VUE, SURV, CPTA, CESS,
+           sum(MONTANT) as MONTANT, country, entity, SOURCE, DEVISE
+    from stock
+    group by TYPAFF, TYPIDEAN, IDEAN, GAR, POSTE, NIVEAU, VUE, SURV, CESS,
+             country, entity, DEVISE, SOURCE
+""")
+stock.createOrReplaceTempView('stock')
+
+
+
+
+
+
+
+
+
+
+
 cle_rachat_vie = spark.sql("""
     select distinct Generation, GAR, SURV, rachat,
            sum(rachat) over (partition by GAR, SURV) as total_rachat
