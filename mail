@@ -1,3 +1,108 @@
+N = 2025
+
+bgd_idean_CQS_CBP_Cancel = (spark.table('cancelation_2')
+    .withColumn('TYPAFF', F.lit(0))
+    .withColumn('TYPIDEAN', F.lit('DI'))
+    .withColumn('idean', F.regexp_replace(F.col('IDEAN'), ' ', ''))   # compress
+    .withColumn('GAR', F.when(F.col('VIE_IARD') == 'VIE', F.lit(10)).otherwise(F.lit(30)))
+    .withColumn('POSTE', F.lit('PRIMES'))
+    .withColumn('Niveau', F.lit('T'))
+    .withColumn('VUE', F.lit(f'RAI_CPTA{N}'))
+    # SURV repris tel quel — déjà présent
+    .withColumn('CESS', F.lit(74))
+    .withColumn('country', F.lit('IT'))
+    .withColumn('entity', F.when(F.col('VIE_IARD') == 'VIE', F.lit('FACL')).otherwise(F.lit('FICL')))
+    .withColumn('Source', F.lit('cancel'))
+    .withColumn('SI', F.lit('CQS'))
+    .withColumn('DEVISE', F.lit('EUR'))
+    .withColumnRenamed('Rachat_off_systeme_2', 'Montant')   # A mettre à jour !!!
+    .select('TYPAFF', 'TYPIDEAN', 'idean', 'GAR', 'POSTE', 'Niveau', 'VUE',
+            'SURV', 'CESS', 'country', 'entity', 'Source', 'SI', 'DEVISE', 'Montant')
+    .dropDuplicates())     # le group by sans agrégat ≈ distinct
+bgd_idean_CQS_CBP_Cancel.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel')
+
+
+N = 2025
+
+# ════════════════════════════════════════════════════════════════════
+# 1. PPNA — Montant = Rachat_off_systeme_2 tel quel, VUE = SSI_CLOT
+# ════════════════════════════════════════════════════════════════════
+bgd_idean_CQS_CBP_Cancel_PPNA = (spark.table('cancelation_2')
+    .withColumn('TYPAFF', F.lit(0))
+    .withColumn('TYPIDEAN', F.lit('DI'))
+    .withColumn('idean', F.regexp_replace(F.col('IDEAN'), ' ', ''))
+    .withColumn('GAR', F.when(F.col('VIE_IARD') == 'VIE', F.lit(10)).otherwise(F.lit(30)))
+    .withColumn('POSTE', F.lit('PPNA'))
+    .withColumn('Niveau', F.lit('T'))
+    .withColumn('VUE', F.lit(f'SSI_CLOT{N}'))
+    .withColumn('CESS', F.lit(74))
+    .withColumn('country', F.lit('IT'))
+    .withColumn('entity', F.when(F.col('VIE_IARD') == 'VIE', F.lit('FACL')).otherwise(F.lit('FICL')))
+    .withColumn('Source', F.lit('cancel'))
+    .withColumn('SI', F.lit('CQS'))
+    .withColumn('DEVISE', F.lit('EUR'))
+    .withColumn('Montant', F.col('Rachat_off_systeme_2'))
+    .select('TYPAFF', 'TYPIDEAN', 'idean', 'GAR', 'POSTE', 'Niveau', 'VUE',
+            'SURV', 'CESS', 'country', 'entity', 'Source', 'SI', 'DEVISE', 'Montant')
+    .dropDuplicates())
+bgd_idean_CQS_CBP_Cancel_PPNA.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel_PPNA')
+
+
+# ════════════════════════════════════════════════════════════════════
+# 2. COMM — Montant = 0.1 * Rachat_off_systeme_2, VUE = RAI_CPTA
+#    (taux 0.1 en dur = raccourci à remplacer par le fichier Taux_Com)
+# ════════════════════════════════════════════════════════════════════
+bgd_idean_CQS_CBP_Cancel_comm = (spark.table('cancelation_2')
+    .withColumn('TYPAFF', F.lit(0))
+    .withColumn('TYPIDEAN', F.lit('DI'))
+    .withColumn('idean', F.regexp_replace(F.col('IDEAN'), ' ', ''))
+    .withColumn('GAR', F.when(F.col('VIE_IARD') == 'VIE', F.lit(10)).otherwise(F.lit(30)))
+    .withColumn('POSTE', F.lit('COMMACQ'))
+    .withColumn('Niveau', F.lit('T'))
+    .withColumn('VUE', F.lit(f'RAI_CPTA{N}'))
+    .withColumn('CESS', F.lit(74))
+    .withColumn('country', F.lit('IT'))
+    .withColumn('entity', F.when(F.col('VIE_IARD') == 'VIE', F.lit('FACL')).otherwise(F.lit('FICL')))
+    .withColumn('Source', F.lit('cancel'))
+    .withColumn('SI', F.lit('CQS'))
+    .withColumn('DEVISE', F.lit('EUR'))
+    .withColumn('Montant', 0.1 * F.col('Rachat_off_systeme_2'))
+    .select('TYPAFF', 'TYPIDEAN', 'idean', 'GAR', 'POSTE', 'Niveau', 'VUE',
+            'SURV', 'CESS', 'country', 'entity', 'Source', 'SI', 'DEVISE', 'Montant')
+    .dropDuplicates())
+bgd_idean_CQS_CBP_Cancel_comm.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel_comm')
+
+# data step : supprimer les lignes surv in (2009, 2010)
+bgd_idean_CQS_CBP_Cancel_comm = spark.table('bgd_idean_CQS_CBP_Cancel_comm').filter(
+    ~F.col('SURV').isin(2009, 2010))
+bgd_idean_CQS_CBP_Cancel_comm.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel_comm')
+
+
+# ════════════════════════════════════════════════════════════════════
+# 3. FAR — Montant = -0.1 * Rachat_off_systeme_2, VUE = SSI_CLOT
+#    (taux -0.1 en dur = raccourci à remplacer par le fichier Taux_Com)
+# ════════════════════════════════════════════════════════════════════
+bgd_idean_CQS_CBP_Cancel_FAR = (spark.table('cancelation_2')
+    .withColumn('TYPAFF', F.lit(0))
+    .withColumn('TYPIDEAN', F.lit('DI'))
+    .withColumn('idean', F.regexp_replace(F.col('IDEAN'), ' ', ''))
+    .withColumn('GAR', F.when(F.col('VIE_IARD') == 'VIE', F.lit(10)).otherwise(F.lit(30)))
+    .withColumn('POSTE', F.lit('FAR'))
+    .withColumn('Niveau', F.lit('T'))
+    .withColumn('VUE', F.lit(f'SSI_CLOT{N}'))
+    .withColumn('CESS', F.lit(74))
+    .withColumn('country', F.lit('IT'))
+    .withColumn('entity', F.when(F.col('VIE_IARD') == 'VIE', F.lit('FACL')).otherwise(F.lit('FICL')))
+    .withColumn('Source', F.lit('cancel'))
+    .withColumn('SI', F.lit('CQS'))
+    .withColumn('DEVISE', F.lit('EUR'))
+    .withColumn('Montant', -0.1 * F.col('Rachat_off_systeme_2'))
+    .select('TYPAFF', 'TYPIDEAN', 'idean', 'GAR', 'POSTE', 'Niveau', 'VUE',
+            'SURV', 'CESS', 'country', 'entity', 'Source', 'SI', 'DEVISE', 'Montant')
+    .dropDuplicates())
+bgd_idean_CQS_CBP_Cancel_FAR.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel_FAR')
+
+
 by_cols = ['typaff', 'typidean', 'idean', 'gar', 'poste', 'niveau',
            'cess', 'country', 'Entity', 'DEVISE']
 
