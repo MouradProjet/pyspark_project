@@ -1,3 +1,15 @@
+by_cols = ['typaff', 'typidean', 'idean', 'gar', 'poste', 'niveau',
+           'cess', 'country', 'Entity', 'DEVISE']
+
+t_stock_ant = (spark.table('stock_ant')
+    .groupBy(*by_cols)
+    .pivot('vue')                    # id vue → les valeurs de vue deviennent des colonnes
+    .agg(F.first('montant')))        # var montant → remplit les colonnes
+t_stock_ant.createOrReplaceTempView('t_stock_ant')
+
+
+.agg(F.sum('montant'))    # si plusieurs montants par groupe/vue à sommer
+
 N = 2025
 
 # ── PROC TRANSPOSE — wide-to-long sur courant et ca ──────────────────
