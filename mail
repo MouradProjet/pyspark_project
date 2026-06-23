@@ -1,3 +1,25 @@
+import re, unicodedata
+
+def clean_column_names(df):
+    def clean(name):
+        name = name.strip()
+        name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
+        name = re.sub(r'[^\w]', '_', name)
+        name = re.sub(r'_+', '_', name)
+        return name.strip('_')
+
+    seen = {}
+    new_names = []
+    for c in df.columns:
+        cleaned = clean(c)
+        if cleaned in seen:
+            seen[cleaned] += 1
+            cleaned = f"{cleaned}_{seen[cleaned]}"
+        else:
+            seen[cleaned] = 0
+        new_names.append(cleaned)
+    return df.toDF(*new_names)
+
 N = 2025
 
 bgd_idean_CQS_CBP_Cancel = (spark.table('cancelation_2')
