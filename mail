@@ -1,3 +1,6 @@
+cancelation_iard3 = spark.table('cle_rachat_iard').crossJoin(spark.table('cancelation_iard2'))
+cancelation_iard3.createOrReplaceTempView('cancelation_iard3')
+
 import re, unicodedata
 
 def clean_column_names(df):
