@@ -1,3 +1,12 @@
+join_keys = ['typaff', 'typidean', 'idean', 'gar', 'poste', 'niveau',
+             'cess', 'country', 'Entity', 'DEVISE']
+
+t_stock = spark.table('t_stock_ant').join(
+    spark.table('stock_n'),
+    join_keys,
+    'full')      # if a or b → full outer join
+t_stock.createOrReplaceTempView('t_stock')
+
 cancelation_iard3 = spark.table('cle_rachat_iard').crossJoin(spark.table('cancelation_iard2'))
 cancelation_iard3.createOrReplaceTempView('cancelation_iard3')
 
