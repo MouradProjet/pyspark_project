@@ -1,0 +1,857 @@
+import re, unicodedata
+
+def clean_column_names(df):
+    def clean(name):
+        name = name.strip()
+        name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
+        name = re.sub(r'[^\w]', '_', name)
+        name = re.sub(r'_+', '_', name)
+        return name.strip('_')
+
+    seen = {}
+    new_names = []
+    for c in df.columns:
+        cleaned = clean(c)
+        if cleaned in seen:
+            seen[cleaned] += 1
+            cleaned = f"{cleaned}_{seen[cleaned]}"
+        else:
+            seen[cleaned] = 0
+        new_names.append(cleaned)
+    return df.toDF(*new_names)
+def import_excel(datafile, out, onglet):
+        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+            .option('dataAddress', f'{onglet}!A1')
+            .option('header', 'true')
+            .load(datafile))
+        _df_tmp=clean_column_names(_df_tmp)
+        _df_tmp.createOrReplaceTempView(out)
+
+def import_csv(datafile, out):
+        df = (spark.read
+             .option("header", "true")
+             .option("sep", ",")
+             .option("encoding", "ISO-8859-1")  
+             .option("inferSchema", "true")
+             .csv(datafile))
+        df.createOrReplaceTempView(out)
+        return df
+def import_excelx(datafile, out, onglet):
+        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+            .option('dataAddress', f'{onglet}!A1')
+            .option('header', 'true')
+            .load(datafile))
+        import re
+        _df_tmp = _df_tmp.toDF(*[re.sub(r'\s+', '_', c.strip()) for c in _df_tmp.columns])
+        _df_tmp.createOrReplaceTempView(out)
+
+
+# Topline CY
+#import_01 = f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_Techniques/Topline/{topline}.xlsx"
+path_azure_input = "abfss://labs@zagsshinelafapraew1sto01.dfs.core.windows.net/lafa/data_excel/CQS/INPUT"
+import_01=f"abfss://labs@zagsshinelafapraew1sto01.dfs.core.windows.net/lafa/data_excel/{topline}.xlsx"
+import_01 = f"/mnt/labs/lclp/ORBIT/INPUT/{topline}.xlsx"
+import_excel(datafile=import_01, out="Topline_Macao", onglet="Combined")
+
+
+from pyspark.sql import functions as F
+from pyspark.sql import Window
+from pyspark.sql import SparkSession
+from pyspark.sql.types import *
+import datetime
+spark = SparkSession.builder.getOrCreate()
+_dfs = {}  # container for DataFrames with dynamic names (macro variables)
+
+# ── Databricks Unity Catalog configuration ───────────────────────────
+# Set your catalog name below. Each SAS LIBNAME becomes a schema.
+# e.g. LIBNAME BGD_Q425 → schema 'bgd_q425' in catalog 'your_catalog'
+_catalog = 'orbit'  # TODO: replace with your Unity Catalog name
+
+n = 2025
+exer = "Q425"
+type_exer = "FY"
+# soit FC2, FC3, HY ou FY selon le type d'arrêté:sert à réuperer les colonnes de la TOPLINE
+arrete = "2025_09_Q4"
+arrete_n_1 = "2025_04_V2"
+nom_base_anterio = "base_anteriorite_idean_2025"
+arrete_n_2 = "2024_09_Q4"
+topline = "092025_DAVC_SHUTTLE_FILE_FY25_V3"
+sdb = "Updated SDB Data Files 03.09.2025"
+# Renseigner le nom de la SDB
+taux_comm_vie = 0.0991
+# Taux du CY =taux moyen gen 2025 envoi BU
+taux_comm_iard = 0.0998
+# Taux du CY =taux moyen gen 2025 envoi BU
+lr_vie = 0.970030461860269
+# LR N-1 dans l'onglet summary fin qu'on reporte sur le courant
+lr_iard = 0.605028051559256
+# LR N-1 dans l'onglet summary fin qu'on reporte sur le courant
+sin_dc = 0.597752359690615
+# Moyenne du ratio prestations/ charge ultime sur les 5 dernières années de l'onglet "DC triangle"
+sin_iu = 0.173594390137475
+#id_ = "~/NAS/X/08.Progammes/INTERNATIONAL/10_TABLE_ID/Table_ID.xlsx"
+#id_="abfss://labs@zagsshinelafapraew1sto01.dfs.core.windows.net/lafa/data_excel/Table_ID.xlsx"
+id_= "/mnt/labs/lclp/ORBIT/INPUT/Table_ID.xlsx"
+import_excel(datafile=id_, out="tabid_new", onglet="Table_ID")
+# On ramene les stop loss
+#import_sl = f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_techniques/Macao/CQS CBP Process/02 - GEP/GEP Stop Loss.xlsx"
+#import_sl = "abfss://labs@zagsshinelafapraew1sto01.dfs.core.windows.net/lafa/data_excel/GEP Stop Loss.xlsx"
+import_sl = "/mnt/labs/lclp/ORBIT/INPUT/GEP Stop Loss.xlsx"
+import_excelx(datafile=import_sl, out="GSL", onglet="Feuil2")
+# On ramene les cancellations
+import_cxls = f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_techniques/Topline/{topline}.xlsx"
+import_cxls = f"abfss://labs@zagsshinelafapraew1sto01.dfs.core.windows.net/lafa/data_excel/{topline}.xlsx"
+import_excelx(datafile=import_01, out="cancelation", onglet="7.Crdr_Di_CXLS")
+# import cle rachat shortcut
+#import_clerachat = f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_techniques/Macao/CQS CBP Process/02 - GEP/1. Travaux/Output_CQS_FY25.xlsx"
+#import_clerachat ="abfss://labs@zagsshinelafapraew1sto01.dfs.core.windows.net/lafa/data_excel/Output_CQS_FY25.xlsx"
+import_clerachat = "/mnt/labs/lclp/ORBIT/INPUT/Output_CQS_FY25.xlsx"
+import_excelx(datafile=import_clerachat, out="cle_rachat", onglet="cle_rachat")
+import_cqs = "/mnt/labs/lclp/ORBIT/INPUT/base_anteriorite_cqs_2025.csv"
+#import_idean = "abfss://labs@zagsshinelafapraew1sto01.dfs.core.windows.net/lafa/data_excel/CQS/INPUT/base_anteriorite_idean_2025.csv"
+import_idean = "/mnt/labs/lclp/ORBIT/INPUT/base_anteriorite_idean_2025.csv"
+
+df_cqs=import_csv(import_cqs,"base_anteriorite_cqs")
+df_idean=import_csv(import_idean,"base_anteriorite_idean")
+
+# on a besoin que du nom de la sdb pour tourner ce bout de code
+# %let rep_programme=~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete/02_Elements_techniques/Macao/CQS CBP Process/04 - Construction BGD;
+# FILENAME Mapping "&rep_programme./Mapping_CQS_CBP.sas" LRECL =32767;
+# %include Mapping;
+# /
+# Création du flag cbp_cqs
+tab_cqs_idean = spark.sql(f"""select distinct idean, country, 1 as flag_cbp
+      from {_catalog}.carto_cqs""")
+tab_cqs_idean.createOrReplaceTempView('tab_cqs_idean')
+
+_dfs[f'base_anteriorite_idean_{n}'] = spark.sql(f"""select t1.*
+                from base_anteriorite_idean t1 
+                where SI = "Macao" and surv < {n}""")
+_dfs[f'base_anteriorite_idean_{n}'].createOrReplaceTempView(f'base_anteriorite_idean_{n}')
+
+_dfs[f'OUV_{n}'] = spark.table(f'base_anteriorite_idean_{n}')
+_dfs[f'OUV_{n}'] = _dfs[f'OUV_{n}'].filter(F.expr(f"""CPTA = {n} - 1  AND
+poste IN ('PPNA', 'PTEC', 'MARGES', 'PSAP', 'PPRC', 'FAR')"""))
+_dfs[f'OUV_{n}'] = (_dfs[f'OUV_{n}']
+    .withColumn('VUE', F.lit(f"SSI_OUV{n}"))
+    .withColumn('NIVEAU', F.lit("T"))
+    .withColumn('SURV', F.when(F.col("POSTE") == F.lit("PPRC"), F.lit(n)).otherwise(F.col('SURV')))
+    .withColumn('PERIMETRE', F.lit("Macao"))
+)
+_dfs[f'OUV_{n}'] = _dfs[f'OUV_{n}'].drop('CPTA')
+_dfs[f'OUV_{n}'].createOrReplaceTempView(f'OUV_{n}')
+
+_dfs[f'OUV_{n}_2'] = spark.sql(f"""select t1.*, t2.PMP_Sales_Name 
+                from OUV_{n} as t1
+                left join tabid_new as t2 on t1.typidean = t2.typidean and t1.idean = t2.idean and t1.country = t2.country_code""")
+_dfs[f'OUV_{n}_2'].createOrReplaceTempView(f'OUV_{n}_2')
+
+ouv_PPNA_CESS = spark.sql(f"""select t1.*
+                from ouv_{n}_2 as t1
+                left join tab_cqs_idean as t2 on t1.idean = t2.idean and t1.typidean = "DI" and t1.country = t2.country
+                where t2.flag_cbp = 1 and typaff = 11 and poste in ("PPNA","FAR")""")
+ouv_PPNA_CESS.createOrReplaceTempView('ouv_PPNA_CESS')
+
+# pas utiliser 
+ouv_PSAP_CESS = spark.sql(f"""select t1.*
+                from ouv_{n}_2 as t1
+                left join tab_cqs_idean as t2 on t1.idean = t2.idean and t1.typidean = "DI" and t1.country = t2.country
+                where t2.flag_cbp = 1 and typaff = 11 and poste='PSAP' """)
+ouv_PSAP_CESS.createOrReplaceTempView('ouv_PSAP_CESS')
+
+# /
+TABID_CBP = spark.table('TABID_NEW')
+TABID_CBP = TABID_CBP.filter(F.expr("""Flag_CBP=1"""))
+TABID_CBP.createOrReplaceTempView('TABID_CBP')
+
+# data FLAG_Macao_ ;
+# set FLAG_Macao;
+# attrib IDEAN length= $20 format = $20. informat =$20.;
+# IDEAN = Scheme;
+# IDEAN_process = substr(RPP,1,5)*1;
+# keep  IDEAN IDEAN_process;
+# run;
+# proc sort data= FLAG_Macao_ nodupkey ; by IDEAN; run ;
+cancelation = spark.table('cancelation').orderBy('IDEAN')
+cancelation.createOrReplaceTempView('cancelation')
+
+TABID_CBP = spark.table('TABID_CBP').orderBy('IDEAN')
+TABID_CBP.createOrReplaceTempView('TABID_CBP')
+
+# data cancelation_ ;
+# Merge cancelation (in=a)  FLAG_Macao_ (in =b ) TABID_CBP (in =c);
+# if a;
+# by IDEAN;
+# montant_&N. = _&type_exer._&N._LC  ;
+# if RGPT ="" then delete;
+# run;
+carto_cqs = spark.table(f'{_catalog}.carto_cqs')
+carto_cqs = (carto_cqs
+    .withColumn('IDEAN_process', F.col('IDEAN').cast('long'))
+)
+carto_cqs.createOrReplaceTempView('carto_cqs')
+
+# ici je mets distinct pour eviter les doublons
+cancelation2 = spark.sql("""select distinct t1.*,t2.IDEAN_process
+from cancelation t1
+left join carto_cqs t2 on (t1.IDEAN=t2.idean) 
+where t2.idean is not null and trim(t2.idean)<> '' """)
+cancelation2.createOrReplaceTempView('cancelation2')
+
+
+cancelation_ = cancelation2.withColumn(f'montant_{n}', F.col('_2025_FY_LC'))
+# mettre au format de la topline
+# ? *if RGPT ="" then delete
+cancelation_.createOrReplaceTempView('cancelation_')
+
+# Ajout FY23 : répartition des cancelations par génération sur la survenance 2023 en utilisant une clé_rachat
+# DETERMINATION DE LA CLE RACHAT VIE : Ajout V1_2024
+CQS_detail = spark.table(f'{_catalog}.cqs_gep_2_bis')
+CQS_detail.createOrReplaceTempView('CQS_detail')
+
+cle_rachat_vie = spark.table('CQS_detail')
+cle_rachat_vie = cle_rachat_vie.filter(F.expr(f"""surv ={n} AND gar=10"""))
+cle_rachat_vie.createOrReplaceTempView('cle_rachat_vie')
+
+cle_rachat_vie = spark.sql("""select Generation, GAR, SURV, sum(Rachat) as rachat
+from cle_rachat_vie 
+group by Generation, GAR, SURV """)
+
+cle_rachat_vie.createOrReplaceTempView('cle_rachat_vie')
+
+cle_rachat_vie = spark.sql("""
+    select distinct Generation, GAR, SURV, rachat,
+           sum(rachat) over (partition by GAR, SURV) as total_rachat
+    from cle_rachat_vie
+""")
+cle_rachat_vie.createOrReplaceTempView('cle_rachat_vie')
+
+cle_rachat_vie = spark.table('cle_rachat_vie')
+cle_rachat_vie = (cle_rachat_vie
+    .withColumn('cle_rachat_vie', F.expr("""rachat/total_rachat"""))
+)
+cle_rachat_vie.createOrReplaceTempView('cle_rachat_vie')
+
+# DETERMINATION DE LA CLE RACHAT NON VIE
+#CQS_detail = spark.table(f'{_catalog}.cqs_gep_2_bis')
+#CQS_detail.createOrReplaceTempView('CQS_detail')
+
+cle_rachat_non_vie = spark.table('CQS_detail')
+cle_rachat_non_vie = cle_rachat_non_vie.filter(F.expr(f"""surv ={n} AND gar=30"""))
+cle_rachat_non_vie.createOrReplaceTempView('cle_rachat_non_vie')
+
+cle_rachat_non_vie = spark.sql("""select Generation, GAR, SURV, sum(Rachat) as rachat
+from cle_rachat_non_vie 
+group by Generation, GAR, SURV """)
+cle_rachat_non_vie.createOrReplaceTempView('cle_rachat_non_vie')
+
+cle_rachat_non_vie = spark.sql("""select distinct Generation, GAR, SURV, rachat,sum(rachat) over (partition by GAR, SURV) as total_rachat
+from cle_rachat_non_vie  """)
+cle_rachat_non_vie.createOrReplaceTempView('cle_rachat_non_vie')
+
+cle_rachat_non_vie = spark.table('cle_rachat_non_vie')
+cle_rachat_non_vie = (cle_rachat_non_vie
+    .withColumn('cle_rachat_non_vie', F.expr("""rachat/total_rachat"""))
+)
+cle_rachat_non_vie.createOrReplaceTempView('cle_rachat_non_vie')
+
+cle_rachat_cqs = spark.sql("""select distinct a.Generation,a.cle_rachat_vie , 
+b.cle_rachat_non_vie,b.generation
+from cle_rachat_vie a left join cle_rachat_non_vie b 
+on a.generation=b.generation""")
+cle_rachat_cqs.createOrReplaceTempView('cle_rachat_cqs')
+
+# renommer la variable gen en surv ici on fait l'hyp que gen=surv
+cle_rachat_cqs_input = spark.table('cle_rachat').select("surv","cle_rachat_vie","cle_rachat_non_vie")
+
+# rename generation=SURV;
+cle_rachat_cqs_input.createOrReplaceTempView('cle_rachat_cqs_input')
+# LIBNAME cqs_out -> Unity Catalog: {_catalog}.cqs_out
+cle_rachat_cqs_input.write.mode('overwrite').saveAsTable(f'{_catalog}.cle_rachat_cqs')
+# exporter la table
+def export_excelx(database, datatable, sheet):
+    datatable.write.format('com.crealytics.spark.excel').option('dataAddress', f'{sheet}!A1').option('header', 'true').mode('overwrite').save(database)
+#export_02 = f"~/NAS/{lreseau}/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_Techniques/Macao/CQS CBP Process/02 - GEP/Output_GEP_Com_new.xlsx"
+export_02 = "/mnt/labs/lclp/ORBIT/OUTPUT/Output_GEP_Com_new.xlsx"
+export_excelx(database=export_02, datatable=cle_rachat_cqs, sheet="cle_rachat")
+
+				
+
+#répartition vie
+cancelation_vie = spark.sql("select t3.* from cancelation_ t3 where t3.VIE_IARD in ('VIE')")
+cancelation_vie.createOrReplaceTempView('cancelation_vie')
+cancelation_vie2 = spark.sql(f"""select IDEAN,sum(montant_{n}) as Rachat_off_systeme
+from cancelation_vie
+group by IDEAN""")
+cancelation_vie2.createOrReplaceTempView('cancelation_vie2')
+cle_rachat_vie = spark.table('cle_rachat_cqs_input')
+cle_rachat_vie = cle_rachat_vie.select('SURV', 'cle_rachat_vie')
+cle_rachat_vie.createOrReplaceTempView('cle_rachat_vie')
+
+cancelation_vie3 = spark.sql("""select *
+from  cle_rachat_vie, cancelation_vie2""")
+cancelation_vie3.createOrReplaceTempView('cancelation_vie3')
+
+cancelation_vie4 = spark.table('cancelation_vie3')
+cancelation_vie4 = (cancelation_vie4
+    .withColumn('Rachat_off_systeme_2', F.expr("""cle_rachat_vie*Rachat_off_systeme"""))
+)
+cancelation_vie4.createOrReplaceTempView('cancelation_vie4')
+
+cancelation_vie5 = spark.table('cancelation_vie4')
+cancelation_vie5 = (cancelation_vie5
+    .withColumn('VIE_IARD', F.lit("VIE"))
+)
+cancelation_vie5 = cancelation_vie5.drop('Rachat_off_systeme')
+cancelation_vie5 = cancelation_vie5.withColumnRenamed('Rachat_off_systeme', 'Rachat_off_systeme_2')
+cancelation_vie5.createOrReplaceTempView('cancelation_vie5')
+
+# répartition iard
+cancelation_iard = spark.sql("""select t3.*
+from cancelation_ t3
+where t3.VIE_IARD in ("IARD")""")
+cancelation_iard.createOrReplaceTempView('cancelation_iard')
+
+cancelation_iard2 = spark.sql(f"""select distinct IDEAN ,sum(montant_{n}) as Rachat_off_systeme
+from cancelation_iard
+group by IDEAN""")
+cancelation_iard2.createOrReplaceTempView('cancelation_iard2')
+
+cle_rachat_iard = spark.table('cle_rachat_cqs_input')
+cle_rachat_iard = cle_rachat_iard.select('SURV', 'cle_rachat_non_vie')
+cle_rachat_iard.createOrReplaceTempView('cle_rachat_iard')
+
+cancelation_iard3 = spark.sql("""select *
+from  cle_rachat_iard, cancelation_iard2""")
+cancelation_iard3.createOrReplaceTempView('cancelation_iard3')
+
+cancelation_iard4 = spark.table('cancelation_iard3')
+cancelation_iard4 = (cancelation_iard4
+    .withColumn('Rachat_off_systeme_2', F.expr("""cle_rachat_non_vie*Rachat_off_systeme"""))
+)
+cancelation_iard4.createOrReplaceTempView('cancelation_iard4')
+
+cancelation_iard5 = spark.table('cancelation_iard4')
+cancelation_iard5 = (cancelation_iard5
+    .withColumn('VIE_IARD', F.lit("IARD"))
+)
+cancelation_iard5 = cancelation_iard5.drop('Rachat_off_systeme')
+cancelation_iard5 = cancelation_iard5.withColumnRenamed('Rachat_off_systeme', 'Rachat_off_systeme_2')
+cancelation_iard5.createOrReplaceTempView('cancelation_iard5')
+
+cancelation_2 = spark.table('cancelation_iard5') \
+    .union(spark.table('cancelation_vie5'))
+cancelation_2.createOrReplaceTempView('cancelation_2')
+
+cancelation_2bis = spark.table('cancelation_2')
+cancelation_2bis = cancelation_2bis.drop('cle_rachat_non_vie', 'cle_rachat_vie')
+cancelation_2bis.createOrReplaceTempView('cancelation_2bis')
+
+carto_anterio_cqs = spark.table(f'{_catalog}.carto_cqs')
+# PMP_Sales_Name
+#carto_anterio_cqs = carto_anterio_cqs.select('IDEAN', 'PERIMETRE')
+#carto_anterio_cqs.createOrReplaceTempView('carto_anterio_cqs')
+
+carto_anterio_cqs = carto_anterio_cqs.orderBy('IDEAN')
+carto_anterio_cqs = carto_anterio_cqs.dropDuplicates(['IDEAN'])
+carto_anterio_cqs.createOrReplaceTempView('carto_anterio_cqs')
+
+_dfs[f'base_anteriorite_CQS_{n}'] = spark.sql(f"""select t1.*
+from {nom_base_anterio} t1 
+left join carto_anterio_cqs t2 on (t1.IDEAN=t2.IDEAN) and (t1.country=t2.country)
+where t2.idean <>'' """)
+_dfs[f'base_anteriorite_CQS_{n}'].createOrReplaceTempView(f'base_anteriorite_CQS_{n}')
+
+# /
+# Récupération des flux d'anterio
+# /
+Primes_anterio = spark.sql(f"""select IDEAN, GAR, SURV, sum(Montant) as Primes_Anterio
+from base_anteriorite_CQS
+where poste in ("PRIMES","ENT_PTF") and typaff = 0
+group by IDEAN, GAR, SURV
+order by IDEAN, GAR, SURV""")
+Primes_anterio.createOrReplaceTempView('Primes_anterio')
+
+Commission_anterio = spark.sql(f"""select IDEAN, GAR, SURV, sum(Montant) as Comm_Anterio
+from base_anteriorite_CQS
+where poste in ("COMMACQ","COMMSOC","FGA") and typaff = 0
+group by IDEAN, GAR, SURV
+order by IDEAN, GAR, SURV""")
+Commission_anterio.createOrReplaceTempView('Commission_anterio')
+
+Sinistres_anterio = spark.sql(f"""select regexp_replace(IDEAN, ' ', '') as idean, GAR, SURV, sum(Montant) as Sinistres_anterio
+from base_anteriorite_CQS
+where poste in ("SINISTRES") and typaff = 0
+group by IDEAN, GAR, SURV
+order by IDEAN, GAR, SURV""")
+Sinistres_anterio.createOrReplaceTempView('Sinistres_anterio')
+
+# data Sinistres_anterio;
+# set Sinistres_anterio ;
+# idean2=put(idean,8.);
+# drop idean;
+# rename idean2=idean;
+# run;
+# /
+# Intégration des stop loss
+# /
+SL = spark.table('GSL')
+SL = (SL
+    .withColumn('IDEAN', F.lit(14529))
+)
+SL = SL.withColumnRenamed('annee', 'surv')
+SL = SL.withColumnRenamed('Stop_Loss', 'PRIMES')
+
+SL = SL.withColumn('idean_char', F.col('idean').cast('string'))
+SL = SL.drop('idean')
+SL = SL.withColumnRenamed('idean_char', 'idean')
+
+cqs_gep = spark.table(f'{_catalog}.cqs_gep_3').unionByName(SL,allowMissingColumns=True)
+
+cqs_gep = (cqs_gep
+    .withColumn('idean2', F.expr("""regexp_replace(idean, ' ', '')"""))
+)
+cqs_gep = cqs_gep.filter(~F.expr("""PRIMES=0 AND Com=0"""))
+cqs_gep = cqs_gep.drop('idean')
+cqs_gep = cqs_gep.withColumnRenamed('idean2', 'idean')
+cqs_gep.createOrReplaceTempView('cqs_gep')
+
+cqs_gep = spark.sql("""select IDEAN, GAR, SURV, sum(PRIMES) as PRIMES, sum(COM) as COM
+from cqs_gep
+group by IDEAN, GAR, SURV""")
+cqs_gep.createOrReplaceTempView('cqs_gep')
+
+Primes_anterio = spark.table('Primes_anterio')
+Primes_anterio = (Primes_anterio
+    .withColumn('idean', F.expr("""regexp_replace(idean, ' ', '')"""))
+)
+Primes_anterio.createOrReplaceTempView('Primes_anterio')
+
+Commission_anterio = spark.table('Commission_anterio')
+Commission_anterio = (Commission_anterio
+    .withColumn('idean', F.expr("""regexp_replace(idean, ' ', '')"""))
+)
+Commission_anterio.createOrReplaceTempView('Commission_anterio')
+
+cqs_gep = spark.table('cqs_gep').orderBy('IDEAN', 'GAR', 'SURV')
+cqs_gep.createOrReplaceTempView('cqs_gep')
+
+# /
+# Calcul des boni mali
+# /
+# MERGE: FULL OUTER JOIN (if a or b / no condition)
+Boni_mali_Primes = spark.table('Primes_anterio').join(spark.table('cqs_gep'), ['IDEAN', 'GAR', 'SURV'], 'full')
+Boni_mali_Primes = Boni_mali_Primes.drop('COM')
+Boni_mali_Primes.createOrReplaceTempView('Boni_mali_Primes')
+
+# MERGE: FULL OUTER JOIN (if a or b / no condition)
+Boni_mali_Commission = spark.table('cqs_gep').join(spark.table('Commission_anterio'), ['IDEAN', 'GAR', 'SURV'], 'full')
+Boni_mali_Commission = Boni_mali_Commission.drop('PRIMES')
+Boni_mali_Commission.createOrReplaceTempView('Boni_mali_Commission')
+
+claims_actuals = spark.sql(f"""select  idean ,GAR ,SURV, 
+sum(Sinistres) as Sinistres, sum(Reserves) as Reserves
+from {_catalog}.claims_actuals_8
+group by IDEAN, GAR ,SURV """)
+claims_actuals.createOrReplaceTempView('claims_actuals')
+
+claims_actuals = spark.table('claims_actuals')
+claims_actuals = (claims_actuals
+    .withColumn('idean2', F.col('idean').cast('string'))
+)
+claims_actuals = claims_actuals.drop('idean')
+claims_actuals = claims_actuals.withColumnRenamed('idean2', 'idean')
+claims_actuals.createOrReplaceTempView('claims_actuals')
+
+claims_actuals = spark.table('claims_actuals').orderBy('IDEAN', 'GAR', 'SURV')
+claims_actuals.createOrReplaceTempView('claims_actuals')
+
+# MERGE: FULL OUTER JOIN (if a or b / no condition)
+Boni_mali_Sinistres = spark.table('Sinistres_anterio').join(spark.table('claims_actuals'), ['IDEAN', 'GAR', 'SURV'], 'full')
+Boni_mali_Sinistres = Boni_mali_Sinistres.drop('reserves')
+Boni_mali_Sinistres.createOrReplaceTempView('Boni_mali_Sinistres')
+
+
+# /
+# Constitution BGD PY
+# /
+bgd_idean_CQS_CBP_Primes = spark.sql(f"""select 0 as TYPAFF, "DI" as TYPIDEAN, regexp_replace(IDEAN, ' ', '') as idean, GAR, "PRIMES" as POSTE, "T" as Niveau, "RAI_CPTA{n}" as VUE,
+SURV, 74 as CESS, "IT" as country, (case when gar = 10 then "FACL" else "FICL" end) as entity,
+"CQS CBP" as Source, "CQS" as SI, "EUR" as DEVISE, 
+sum(coalesce(PRIMES,0)-coalesce(Primes_Anterio,0)) as Montant
+from Boni_mali_Primes
+where surv<{n} and abs(coalesce(PRIMES,0)-coalesce(Primes_Anterio,0))>0.01
+group by IDEAN, GAR, SURV""")
+bgd_idean_CQS_CBP_Primes.createOrReplaceTempView('bgd_idean_CQS_CBP_Primes')
+
+bgd_idean_CQS_CBP_Primes = spark.table('bgd_idean_CQS_CBP_Primes')
+bgd_idean_CQS_CBP_Primes = bgd_idean_CQS_CBP_Primes.filter(~F.expr("""surv IN (2009,2010)"""))
+bgd_idean_CQS_CBP_Primes.createOrReplaceTempView('bgd_idean_CQS_CBP_Primes')
+
+# Ne pas oublier les B/M issus des cancelations cf bgd_idean_cqs_cbp_cancel_comm
+bgd_idean_CQS_CBP_Commission = spark.sql(f"""select 0 as TYPAFF, "DI" as TYPIDEAN, regexp_replace(IDEAN, ' ', '') as idean, GAR, "COMMACQ" as POSTE, "T" as Niveau, "RAI_CPTA{n}" as VUE,
+SURV, 74 as CESS, "IT" as country, (case when gar = 10 then "FACL" else "FICL" end) as entity,
+"CQS CBP" as Source, "CQS" as SI, "EUR" as DEVISE, 
+sum(coalesce(COM,0)-coalesce(Comm_Anterio,0)) as Montant
+from Boni_mali_Commission
+where surv<{n} and abs(coalesce(COM,0)-coalesce(Comm_Anterio,0))>0.01
+group by IDEAN, GAR, SURV, (case when gar = 10 then "FACL" else "FICL" end)""")
+bgd_idean_CQS_CBP_Commission.createOrReplaceTempView('bgd_idean_CQS_CBP_Commission')
+
+bgd_idean_CQS_CBP_Commission = spark.table('bgd_idean_CQS_CBP_Commission')
+bgd_idean_CQS_CBP_Commission = bgd_idean_CQS_CBP_Commission.filter(~F.expr("""surv IN (2009,2010)"""))
+bgd_idean_CQS_CBP_Commission.createOrReplaceTempView('bgd_idean_CQS_CBP_Commission')
+
+bgd_idean_CQS_CBP_PPNA = spark.sql(f"""select 0 as TYPAFF, "DI" as TYPIDEAN, regexp_replace(IDEAN, ' ', '') as idean , GAR, "PPNA " as POSTE, "T" as Niveau, "SSI_CLOT{n}" as VUE,
+SURV, 74 as CESS, "IT" as country, (case when gar = 10 then "FACL" else "FICL" end) as entity,
+"CQS CBP" as Source, "CQS" as SI, "EUR" as DEVISE, 
+sum(coalesce(UEP,0)) as Montant
+from {_catalog}.cqs_uep_pl_3
+where  abs(coalesce(UEP,0))>0.01
+group by IDEAN, GAR, SURV, (case when gar = 10 then "FACL" else "FICL" end)""")
+bgd_idean_CQS_CBP_PPNA.createOrReplaceTempView('bgd_idean_CQS_CBP_PPNA')
+
+bgd_idean_CQS_CBP_FAR = spark.sql(f"""select 0 as TYPAFF, "DI" as TYPIDEAN, regexp_replace(IDEAN, ' ', '') as idean, GAR, "FAR " as POSTE, "T" as Niveau, "SSI_CLOT{n}" as VUE,
+SURV, 74 as CESS, "IT" as country, (case when gar = 10 then "FACL" else "FICL" end) as entity,
+"CQS CBP" as Source, "CQS" as SI, "EUR" as DEVISE, 
+sum(coalesce(DAC,0))*(-1) as Montant
+from {_catalog}.cqs_uep_pl_3
+where  abs(coalesce(DAC,0))>0.01
+group by IDEAN, GAR, SURV, (case when gar = 10 then "FACL" else "FICL" end)""")
+bgd_idean_CQS_CBP_FAR.createOrReplaceTempView('bgd_idean_CQS_CBP_FAR')
+# ════════════════════════════════════════════════════════════════════
+# 1. Cancel — Montant = Rachat_off_systeme_2 tel quel, VUE = SSI_CLOT
+# ════════════════════════════════════════════════════════════════════
+bgd_idean_CQS_CBP_Cancel = (spark.table('cancelation_2')
+    .withColumn('TYPAFF', F.lit(0))
+    .withColumn('TYPIDEAN', F.lit('DI'))
+    .withColumn('idean', F.regexp_replace(F.col('IDEAN'), ' ', ''))   # compress
+    .withColumn('GAR', F.when(F.col('VIE_IARD') == 'VIE', F.lit(10)).otherwise(F.lit(30)))
+    .withColumn('POSTE', F.lit('PRIMES'))
+    .withColumn('Niveau', F.lit('T'))
+    .withColumn('VUE', F.lit(f'RAI_CPTA{n}')) # SURV repris tel quel — déjà présent
+    .withColumn('CESS', F.lit(74))
+    .withColumn('country', F.lit('IT'))
+    .withColumn('entity', F.when(F.col('VIE_IARD') == 'VIE', F.lit('FACL')).otherwise(F.lit('FICL')))
+    .withColumn('Source', F.lit('cancel'))
+    .withColumn('SI', F.lit('CQS'))
+    .withColumn('DEVISE', F.lit('EUR'))
+    .withColumnRenamed('Rachat_off_systeme_2', 'Montant')   # A mettre à jour !!!
+    .select('TYPAFF', 'TYPIDEAN', 'idean', 'GAR', 'POSTE', 'Niveau', 'VUE',
+            'SURV', 'CESS', 'country', 'entity', 'Source', 'SI', 'DEVISE', 'Montant')
+    .dropDuplicates())     # le group by sans agrégat ≈ distinct
+bgd_idean_CQS_CBP_Cancel.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel')
+
+
+bgd_idean_CQS_CBP_Cancel = spark.table('bgd_idean_CQS_CBP_Cancel')
+bgd_idean_CQS_CBP_Cancel = bgd_idean_CQS_CBP_Cancel.filter(~F.expr("""surv IN (2009,2010)"""))
+bgd_idean_CQS_CBP_Cancel.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel')
+
+# ════════════════════════════════════════════════════════════════════
+# 1. PPNA — Montant = Rachat_off_systeme_2 tel quel, VUE = SSI_CLOT
+# ════════════════════════════════════════════════════════════════════
+bgd_idean_CQS_CBP_Cancel_PPNA = (spark.table('cancelation_2')
+    .withColumn('TYPAFF', F.lit(0))
+    .withColumn('TYPIDEAN', F.lit('DI'))
+    .withColumn('idean', F.regexp_replace(F.col('IDEAN'), ' ', ''))
+    .withColumn('GAR', F.when(F.col('VIE_IARD') == 'VIE', F.lit(10)).otherwise(F.lit(30)))
+    .withColumn('POSTE', F.lit('PPNA'))
+    .withColumn('Niveau', F.lit('T'))
+    .withColumn('VUE', F.lit(f'SSI_CLOT{n}'))
+    .withColumn('CESS', F.lit(74))
+    .withColumn('country', F.lit('IT'))
+    .withColumn('entity', F.when(F.col('VIE_IARD') == 'VIE', F.lit('FACL')).otherwise(F.lit('FICL')))
+    .withColumn('Source', F.lit('cancel'))
+    .withColumn('SI', F.lit('CQS'))
+    .withColumn('DEVISE', F.lit('EUR'))
+    .withColumn('Montant', F.col('Rachat_off_systeme_2'))
+    .select('TYPAFF', 'TYPIDEAN', 'idean', 'GAR', 'POSTE', 'Niveau', 'VUE',
+            'SURV', 'CESS', 'country', 'entity', 'Source', 'SI', 'DEVISE', 'Montant')
+    .dropDuplicates())
+bgd_idean_CQS_CBP_Cancel_PPNA.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel_PPNA')
+
+
+# ════════════════════════════════════════════════════════════════════
+# 2. COMM — Montant = 0.1 * Rachat_off_systeme_2, VUE = RAI_CPTA
+#    (taux 0.1 en dur = raccourci à remplacer par le fichier Taux_Com)
+# ════════════════════════════════════════════════════════════════════
+bgd_idean_CQS_CBP_Cancel_comm = (spark.table('cancelation_2')
+    .withColumn('TYPAFF', F.lit(0))
+    .withColumn('TYPIDEAN', F.lit('DI'))
+    .withColumn('idean', F.regexp_replace(F.col('IDEAN'), ' ', ''))
+    .withColumn('GAR', F.when(F.col('VIE_IARD') == 'VIE', F.lit(10)).otherwise(F.lit(30)))
+    .withColumn('POSTE', F.lit('COMMACQ'))
+    .withColumn('Niveau', F.lit('T'))
+    .withColumn('VUE', F.lit(f'RAI_CPTA{n}'))
+    .withColumn('CESS', F.lit(74))
+    .withColumn('country', F.lit('IT'))
+    .withColumn('entity', F.when(F.col('VIE_IARD') == 'VIE', F.lit('FACL')).otherwise(F.lit('FICL')))
+    .withColumn('Source', F.lit('cancel'))
+    .withColumn('SI', F.lit('CQS'))
+    .withColumn('DEVISE', F.lit('EUR'))
+    .withColumn('Montant', 0.1 * F.col('Rachat_off_systeme_2'))
+    .select('TYPAFF', 'TYPIDEAN', 'idean', 'GAR', 'POSTE', 'Niveau', 'VUE',
+            'SURV', 'CESS', 'country', 'entity', 'Source', 'SI', 'DEVISE', 'Montant')
+    .dropDuplicates())
+bgd_idean_CQS_CBP_Cancel_comm.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel_comm')
+
+# data step : supprimer les lignes surv in (2009, 2010)
+bgd_idean_CQS_CBP_Cancel_comm = spark.table('bgd_idean_CQS_CBP_Cancel_comm').filter(
+    ~F.col('SURV').isin(2009, 2010))
+bgd_idean_CQS_CBP_Cancel_comm.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel_comm')
+
+
+# ════════════════════════════════════════════════════════════════════
+# 3. FAR — Montant = -0.1 * Rachat_off_systeme_2, VUE = SSI_CLOT
+#    (taux -0.1 en dur = raccourci à remplacer par le fichier Taux_Com)
+# ════════════════════════════════════════════════════════════════════
+bgd_idean_CQS_CBP_Cancel_FAR = (spark.table('cancelation_2')
+    .withColumn('TYPAFF', F.lit(0))
+    .withColumn('TYPIDEAN', F.lit('DI'))
+    .withColumn('idean', F.regexp_replace(F.col('IDEAN'), ' ', ''))
+    .withColumn('GAR', F.when(F.col('VIE_IARD') == 'VIE', F.lit(10)).otherwise(F.lit(30)))
+    .withColumn('POSTE', F.lit('FAR'))
+    .withColumn('Niveau', F.lit('T'))
+    .withColumn('VUE', F.lit(f'SSI_CLOT{n}'))
+    .withColumn('CESS', F.lit(74))
+    .withColumn('country', F.lit('IT'))
+    .withColumn('entity', F.when(F.col('VIE_IARD') == 'VIE', F.lit('FACL')).otherwise(F.lit('FICL')))
+    .withColumn('Source', F.lit('cancel'))
+    .withColumn('SI', F.lit('CQS'))
+    .withColumn('DEVISE', F.lit('EUR'))
+    .withColumn('Montant', -0.1 * F.col('Rachat_off_systeme_2'))
+    .select('TYPAFF', 'TYPIDEAN', 'idean', 'GAR', 'POSTE', 'Niveau', 'VUE',
+            'SURV', 'CESS', 'country', 'entity', 'Source', 'SI', 'DEVISE', 'Montant')
+    .dropDuplicates())
+bgd_idean_CQS_CBP_Cancel_FAR.createOrReplaceTempView('bgd_idean_CQS_CBP_Cancel_FAR')
+bgd_idean_CQS_CBP_SINISTRES = spark.sql(f"""select 0 as TYPAFF, "DI" as TYPIDEAN, IDEAN, GAR, "SINISTRES" as POSTE, "T" as Niveau, "RAI_CPTA{n}" as VUE,
+SURV, 74 as CESS, "IT" as country, (case when gar = 10 then "FACL" else "FICL" end) as entity,
+"CQS CBP" as Source, "CQS" as SI, "EUR" as DEVISE, 
+sum(coalesce(Sinistres,0)-coalesce(Sinistres_anterio,0)) as Montant
+from boni_mali_sinistres
+where surv<{n} and abs(coalesce(Sinistres,0)-coalesce(Sinistres_anterio,0))>0.01
+group by IDEAN, GAR, SURV""")
+bgd_idean_CQS_CBP_SINISTRES.createOrReplaceTempView('bgd_idean_CQS_CBP_SINISTRES')
+
+bgd_idean_CQS_CBP_SINISTRES = spark.table('bgd_idean_CQS_CBP_SINISTRES')
+bgd_idean_CQS_CBP_SINISTRES = bgd_idean_CQS_CBP_SINISTRES.filter(~F.expr("""surv IN (2009,2010,2011)"""))
+bgd_idean_CQS_CBP_SINISTRES.createOrReplaceTempView('bgd_idean_CQS_CBP_SINISTRES')
+
+bgd_idean_CQS_CBP_Reserves = spark.sql(f"""select 0 as TYPAFF, "DI" as TYPIDEAN, IDEAN, GAR, "PSAP" as POSTE, "T" as Niveau, "SSI_CLOT{n}" as VUE,
+SURV, 74 as CESS, "IT" as country, (case when gar = 10 then "FACL" else "FICL" end) as entity,
+"CQS CBP" as Source, "CQS" as SI, "EUR" as DEVISE, 
+sum(coalesce(Reserves,0)) as Montant
+from claims_actuals
+where surv<{n} and abs(coalesce(Reserves,0))>0.01
+group by IDEAN, GAR, SURV""")
+bgd_idean_CQS_CBP_Reserves.createOrReplaceTempView('bgd_idean_CQS_CBP_Reserves')
+
+bgd_idean_CQS_CBP_Ouv = spark.sql(f"""select 0 as TYPAFF, "DI" as TYPIDEAN, regexp_replace(IDEAN, ' ', '') as idean, GAR, POSTE, "T" as Niveau, "SSI_OUV{n}" as VUE,
+SURV, 74 as CESS, "IT" as country, entity,
+"CQS CBP" as Source, "CQS" as SI, "EUR" as DEVISE, 
+sum(Montant) as Montant
+from base_anteriorite_CQS
+where CPTA={n}-1 and typaff = 0 and poste in ("PSAP","PTEC","PPNA","FAR","Marges","PPRC","PPNA_C","FAR_C")
+group by IDEAN, GAR, SURV, POSTE, entity""")
+bgd_idean_CQS_CBP_Ouv.createOrReplaceTempView('bgd_idean_CQS_CBP_Ouv')
+
+def mise_en_f(variable):
+
+    _dfs[f'bgd_idean_CQS_CBP_{variable}_'] = spark.table(f'bgd_idean_CQS_CBP_{variable}')
+    _dfs[f'bgd_idean_CQS_CBP_{variable}_'] = (_dfs[f'bgd_idean_CQS_CBP_{variable}_']
+    .withColumn('POSTE2', F.col('POSTE'))
+    )
+    # ATTRIB: attrib POSTE2 length = $20 format = $20. informat =$20. label ='POSTE'
+    _dfs[f'bgd_idean_CQS_CBP_{variable}_'] = _dfs[f'bgd_idean_CQS_CBP_{variable}_'].drop('POSTE')
+    _dfs[f'bgd_idean_CQS_CBP_{variable}_'] = _dfs[f'bgd_idean_CQS_CBP_{variable}_'].withColumnRenamed('POSTE2', 'POSTE')
+    _dfs[f'bgd_idean_CQS_CBP_{variable}_'].createOrReplaceTempView(f'bgd_idean_CQS_CBP_{variable}_')
+
+
+mise_en_f("Primes")
+mise_en_f("Commission")
+mise_en_f("ppna")
+mise_en_f("Cancel_PPNA")
+mise_en_f("far")
+mise_en_f("Cancel_FAR")
+mise_en_f("Cancel")
+mise_en_f("Cancel_comm")
+mise_en_f("Ouv")
+mise_en_f("sinistres")
+mise_en_f("reserves")
+bgd_idean_CQS_CBP_PY_all = spark.table('bgd_idean_CQS_CBP_Primes_') \
+    .union(spark.table('bgd_idean_CQS_CBP_Cancel_') \
+    .union(spark.table('bgd_idean_CQS_CBP_Commission_') \
+    .union(spark.table('bgd_idean_CQS_CBP_Cancel_comm_') \
+    .union(spark.table('bgd_idean_cqs_cbp_ppna_') \
+    .union(spark.table('bgd_idean_CQS_CBP_Cancel_PPNA_') \
+    .union(spark.table('bgd_idean_CQS_CBP_far_') \
+    .union(spark.table('bgd_idean_CQS_CBP_Cancel_FAR_') \
+    .union(spark.table('bgd_idean_cqs_cbp_sinistres_') \
+    .union(spark.table('bgd_idean_cqs_cbp_reserves_') \
+    .union(spark.table('bgd_idean_CQS_CBP_Ouv_')))))))))))
+bgd_idean_CQS_CBP_PY_all.createOrReplaceTempView('bgd_idean_CQS_CBP_PY_all')
+# LIBNAME cqs_out -> Unity Catalog: {_catalog}.cqs_out
+#bgd_idean_CQS_CBP_PY_all.write.mode('overwrite').saveAsTable(f'{_catalog}.bgd_idean_CQS_CBP_PY_all')
+
+bgd_idean_CQS_CBP_PY_all = spark.table('bgd_idean_CQS_CBP_PY_all')
+bgd_idean_CQS_CBP_PY_all = (bgd_idean_CQS_CBP_PY_all
+    .withColumn('poste', F.when(F.expr("""poste IN ("FAR_C")"""), F.lit("FAR"))
+                        .when(F.expr("""poste IN ("PPNA_C")"""), F.lit("PPNA"))
+                        .otherwise(F.col("poste")))
+)
+bgd_idean_CQS_CBP_PY_all.createOrReplaceTempView('bgd_idean_CQS_CBP_PY_all')
+# LIBNAME cqs_out -> Unity Catalog: {_catalog}.cqs_out
+#bgd_idean_CQS_CBP_PY_all.write.mode('overwrite').saveAsTable(f'{_catalog}.bgd_idean_CQS_CBP_PY_all')
+
+
+
+
+# bgd_idean_CQS_CBP_PY_all = spark.sql("""select 
+# 	TYPAFF, TYPIDEAN, regexp_replace(IDEAN, ' ', '') as idean, GAR,POSTE,Niveau,VUE,SURV, CESS, country,  entity,Source,  SI, DEVISE, Montant 
+# 	from orbit.bgd_idean_CQS_CBP_PY_all
+# 	group by IDEAN, GAR, SURV, POSTE, entity """) check unicité 
+
+bgd_idean_CQS_CBP_PY_all = spark.table('bgd_idean_CQS_CBP_PY_all') \
+    .dropDuplicates(['IDEAN', 'GAR', 'SURV', 'POSTE', 'entity'])
+bgd_idean_CQS_CBP_PY_all.createOrReplaceTempView('bgd_idean_CQS_CBP_PY_all')
+
+
+
+# proc sort data = bgd_idean_CQS_CBP out=BGD_&exer..bgd_idean_CQS_CBP; by IDEAN GAR SURV; run;
+# Data BGD_&exer..bgd_idean_CQS_CBP;
+# set BGD_&exer..bgd_idean_CQS_CBP;
+# y_char = compress(put(IDEAN,21.0));
+# drop IDEAN;
+# rename y_char = IDEAN;
+# if MONTANT  = 0 then delete;
+# run;
+# Définition scope CQS CBP dans Topline courante yc NB
+Topline_Macao2 = spark.table('Topline_Macao')
+Topline_Macao2 = Topline_Macao2.filter(F.expr("""CY_PY IN ("CY")"""))
+Topline_Macao2 = (Topline_Macao2
+    .withColumn('GAR',
+        F.when(F.col("VIE_IARD") == "VIE", F.lit(10))
+         .otherwise(F.lit(30)))
+    .withColumn('idean', F.expr("""regexp_replace(idean, ' ', '')"""))
+    .withColumn(f'montant_{n}',F.col('2025_FY_LC'))
+)
+# Ajout provisoire "V1" suite format topline du 19/09/23
+Topline_Macao2.createOrReplaceTempView('Topline_Macao2')
+
+# t2.RPP as RPP_Macao ,t2.Scheme,
+Topline_cqs_CBP_stock = spark.sql(f"""select distinct t1.*, "STOCK" as source_2
+from Topline_Macao2 t1 
+left join {_catalog}.carto_cqs t2 on (t1.Country_Code=t2.Country) and  (t1.IDEAN=t2.IDEAN)
+where t2.idean not in (' ') """)
+
+
+Topline_cqs_CBP_stock.createOrReplaceTempView('Topline_cqs_CBP_stock')
+
+# Topline New Business
+Topline_cqs_CBP_NB = spark.sql("""select distinct t1.*, FLAG_CBP
+from Topline_Macao2 t1 
+Left join tabid_new t3 on (t1.Country_Code=t3.COUNTRY_CODE)and (t1.Micro_Prod=t3.PRODUIT_PRTG)
+where Micro_Prod in ("CQS")and FLAG_CBP=1 and t1.IDEAN in (" ")""")
+Topline_cqs_CBP_NB.createOrReplaceTempView('Topline_cqs_CBP_NB')
+
+Topline_cqs_CBP_NB = spark.table('Topline_cqs_CBP_NB')
+Topline_cqs_CBP_NB = (Topline_cqs_CBP_NB
+    .withColumn('IDEAN', F.col('Line_number'))
+    .withColumn('IDEAN_Macao', F.col('Line_number'))
+    .withColumn('source_2', F.lit("NB"))
+)
+Topline_cqs_CBP_NB = Topline_cqs_CBP_NB.drop('FLAG_CQS_CBP')
+Topline_cqs_CBP_NB.createOrReplaceTempView('Topline_cqs_CBP_NB')
+
+Topline_cqs_CBP = spark.table('Topline_cqs_CBP_stock') \
+    .unionByName(spark.table('Topline_cqs_CBP_NB'),allowMissingColumns=True)
+Topline_cqs_CBP = (Topline_cqs_CBP
+    .withColumn('idean', F.expr("""regexp_replace(idean, ' ', '')"""))
+)
+Topline_cqs_CBP.createOrReplaceTempView('Topline_cqs_CBP')
+
+
+# /
+# Constitution BGD CY
+# /
+bgd_idean_CQS_CBP_PrimesCY = spark.sql(f"""select 0 as TYPAFF, "DI" as TYPIDEAN, IDEAN as Idean, GAR, "PRIMES" as POSTE, "T" as Niveau, "FAI_CPTA{n}" as VUE,
+{n} as SURV, 74 as CESS, "IT" as country, (case when gar = 10 then "FACL" else "FICL" end) as entity,
+"CQS CBP" as Source, "CQS" as SI, "EUR" as DEVISE, 
+ montant_{n} as Montant
+from Topline_CQS_CBP
+where montant_{n} <> 0
+""")#group by IDEAN, GAR, SURV à revoir l'unicité 
+bgd_idean_CQS_CBP_PrimesCY.createOrReplaceTempView('bgd_idean_CQS_CBP_PrimesCY')
+bgd_idean_CQS_CBP_CommCY = (bgd_idean_CQS_CBP_PrimesCY
+    .withColumn('montant_Commission',
+        F.when(F.expr("""gar = 10"""), F.expr(f"""{taux_comm_vie} * Montant"""))
+         .otherwise(F.expr(f"""{taux_comm_iard} * Montant""")))
+    .withColumn('POSTE2', F.lit("COMMACQ"))
+)
+# ATTRIB: attrib POSTE2 length = $20 format = $20. informat =$20. label ='POSTE'
+bgd_idean_CQS_CBP_CommCY = bgd_idean_CQS_CBP_CommCY.drop('Montant', 'POSTE')
+bgd_idean_CQS_CBP_CommCY = bgd_idean_CQS_CBP_CommCY.withColumnRenamed('montant_Commission', 'montant')
+bgd_idean_CQS_CBP_CommCY = bgd_idean_CQS_CBP_CommCY.withColumnRenamed('POSTE2', 'POSTE')
+bgd_idean_CQS_CBP_CommCY.createOrReplaceTempView('bgd_idean_CQS_CBP_CommCY')
+
+bgd_idean_CQS_CBP_PPNACY = (bgd_idean_CQS_CBP_PrimesCY
+    .withColumn('montant_PPNA', F.expr("""Montant * (((10-0)*(10-1))/(10*11))"""))
+    .withColumn('POSTE', F.lit("PPNA"))
+    .withColumn('VUE', F.lit("SSI_CLOT{n}"))
+)
+# Regle 78 retenu avec une duration de 10 ans pour les cqs CBP
+bgd_idean_CQS_CBP_PPNACY = bgd_idean_CQS_CBP_PPNACY.drop('Montant')
+bgd_idean_CQS_CBP_PPNACY = bgd_idean_CQS_CBP_PPNACY.withColumnRenamed('montant_PPNA', 'montant')
+bgd_idean_CQS_CBP_PPNACY.createOrReplaceTempView('bgd_idean_CQS_CBP_PPNACY')
+
+# On Ramène le stock de PPNA et les FAR associés obtenu à partir du programme de calcul des PPNA et DAC pour l'année N
+cqs_uep_pl_3_ = spark.table(f'{_catalog}.cqs_uep_pl_3')
+cqs_uep_pl_3_.createOrReplaceTempView('cqs_uep_pl_3_')
+
+_dfs[f'base_idean_PPNA_{n}'] = spark.sql(f"""select 0 as TYPAFF, "DI" as TYPIDEAN, IDEAN, GAR, "PPNA" as POSTE, "T" as Niveau, "SSI_CLOT{n}" as VUE,
+   SURV, 74 as CESS, "IT" as country, (case when gar = 10 then "FACL" else "FICL" end) as entity,
+	"CQS CBP" as Source, "CQS" as SI, "EUR" as DEVISE, UEP as Montant
+	from cqs_uep_pl_3_
+	where SURV ={n} 
+	""")
+   # group by IDEAN, GAR, SURV verifier l'unicité 
+_dfs[f'base_idean_PPNA_{n}'].createOrReplaceTempView(f'base_idean_PPNA_{n}')
+
+_dfs[f'base_idean_far_{n}'] = spark.sql(f"""select 0 as TYPAFF, "DI" as TYPIDEAN, IDEAN, GAR, "FAR" as POSTE, "T" as Niveau, "SSI_CLOT{n}" as VUE,
+   SURV, 74 as CESS, "IT" as country, (case when gar = 10 then "FACL" else "FICL" end) as entity,
+	"CQS CBP" as Source, "CQS" as SI, "EUR" as DEVISE,  DAC as Montant
+	from cqs_uep_pl_3_
+	where SURV ={n} 
+	""")
+    #group by IDEAN, GAR, SURV
+_dfs[f'base_idean_far_{n}'].createOrReplaceTempView(f'base_idean_far_{n}')
+
+bgd_idean_CQS_CBP_FARCY = spark.table('bgd_idean_CQS_CBP_PPNACY')
+bgd_idean_CQS_CBP_FARCY = (bgd_idean_CQS_CBP_FARCY
+    .withColumn('montant_FAR',
+        F.when(F.expr("""gar = 10"""), F.expr(f"""-{taux_comm_vie} * Montant"""))
+         .otherwise(F.expr(f"""-{taux_comm_iard} * Montant""")))
+    .withColumn('POSTE', F.lit("FAR"))
+)
+bgd_idean_CQS_CBP_FARCY = bgd_idean_CQS_CBP_FARCY.drop('Montant')
+bgd_idean_CQS_CBP_FARCY = bgd_idean_CQS_CBP_FARCY.withColumnRenamed('montant_FAR', 'montant')
+bgd_idean_CQS_CBP_FARCY.createOrReplaceTempView('bgd_idean_CQS_CBP_FARCY')
+
+bgd_idean_cqs_cbp_CY = spark.table('bgd_idean_CQS_CBP_CommCY') \
+    .union(spark.table('bgd_idean_CQS_CBP_PrimesCY') \
+    .union(spark.table('bgd_idean_CQS_CBP_PPNACY') \
+    .union(spark.table('bgd_idean_CQS_CBP_FARCY'))))
+bgd_idean_cqs_cbp_CY.createOrReplaceTempView('bgd_idean_cqs_cbp_CY')
+# LIBNAME cqs_out -> Unity Catalog: {_catalog}.cqs_out
+#bgd_idean_cqs_cbp_CY.write.mode('overwrite').saveAsTable(f'{_catalog}.bgd_idean_cqs_cbp_CY')
+
+bgd_idean_cqs_all = spark.table('bgd_idean_cqs_cbp_CY') \
+    .union(spark.table(f'{_catalog}.bgd_idean_cqs_cbp_PY_all'))
+bgd_idean_cqs_all = (bgd_idean_cqs_all
+    .withColumn('poste', F.when(F.col('poste') == "PPNA_C", F.lit("PPNA"))
+                        .when(F.col('poste') == "FAR_C", F.lit("FAR"))
+                        .otherwise(F.col("poste")))
+)
+bgd_idean_cqs_all.createOrReplaceTempView('bgd_idean_cqs_all')
+# LIBNAME cqs_out -> Unity Catalog: {_catalog}.cqs_out
+bgd_idean_cqs_all.write.mode('overwrite').saveAsTable(f'{_catalog}.bgd_idean_cqs_all')
