@@ -1,0 +1,582 @@
+/************* Cession *********************/
+%let N=2026;
+%let Arrete = 2026_04_V2 ; 
+%let exer = V226;
+
+LIBNAME CQS_Out "~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete/02_Elements_techniques/Macao/CQS CBP Process/02 - GEP" ; 
+LIBNAME CQS_SIN "~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete/02_Elements_techniques/Macao/CQS CBP Process/03 - Claims et Reserves" ; 
+LIBNAME BGD_&exer. "~/NAS/X/08.Progammes/Etablissements financiers/OUTIL INVENTAIRE/Outil Inventaire Final/SAS/Bibliotheques SAS/Bases Globales &exer.";
+
+
+/********************création d'une base avec tous les postes pour appliquer la cession*********************/
+/************************               MISE EN FORME BASE GEN = N      **************************************************/
+
+/*ici le but est d'avoir la base du courant ie lié à la genration = N et surv =N */
+/* on a enlevé la surv=N liée à ancienne generations*/
+
+data donnees_gen&N. ;
+set cqs_out.bgd_cession_traite_gen&N.; 
+/*where poste in("PRIMES","PSAP","SINISTRES","PPNA");*/
+keep IDEAN generation surv gar poste Montant ;
+rename generation=gen;
+run; 
+
+/*************** Mise en forme de la base PY****************/
+
+/********************************* UEP **********************/
+
+proc sql;
+create table UEP as select 
+idean,gen , SURV, gar, Type_Pret,sum(UEP) as PPNA 
+from cqs_out.cqs_uep_pl_3
+group by idean, Gen,SURV, gar, Type_Pret ; 
+quit;
+
+data UEP;
+set UEP ;
+if idean=. then delete ;
+if idean=1 then delete; run; 
+
+proc sort data= UEP OUT=UEP ;
+by idean Gen SURV gar Type_Pret ; run ;
+
+proc transpose data=UEP out = UEP ; 
+var PPNA ; 
+by idean Gen SURV gar Type_Pret ; 
+run ; 
+
+DATA UEP ;
+set UEP;
+rename _NAME_=POSTE;
+rename COL1=Montant ; 
+run; 
+
+/********************* PSAP **********************************/
+
+proc sql ;
+create table reserves as select 
+idean, gar,surv,generation as Gen, type_pret,sum(reserves) as PSAP
+from  cqs_sin.claims_actuals_9
+group by idean, gar, surv, Gen, type_pret ; 
+quit; 
+
+proc sort data=reserves out=reserves ;
+by idean Gen SURV gar Type_Pret ; 
+run; 
+
+proc transpose data=reserves out=reserves ;
+var PSAP ;
+by idean Gen SURV gar Type_Pret ; 
+run ;  
+
+DATA reserves ;
+set reserves ;
+rename _NAME_=POSTE ;
+rename COL1= Montant ;
+idean_char=put(idean,8.) ;
+drop idean; 
+rename idean_char=idean; 
+run; 
+
+
+/****************consolidation de la base PY clot cession ********/
+
+data donnees_py ;
+format POSTE $15.;
+set uep reserves bgd_idean_CQS_CBP_PSAP_CYo_ bgd_idean_CQS_CBP_sinistres_CYo_;
+keep POSTE idean gen SURV GAR Type_Pret Montant ;
+run; 
+
+/***********************            TRAITE CQP PY           ********************/
+
+%macro split_cess_cqp(cess,taux);
+data cess_py_cqp_&cess.;
+set donnees_py ;
+where 2019<=gen<=2022 and type_pret="CQP" and gar=10 ;
+if poste in("PPNA"/*,"PRIMES","CANCEL"*/) then cess=-montant*(1-0.276)*&taux. ;
+else if poste in (/*"SINISTRES",*/"PSAP") then cess=-montant*&taux.;
+nom_cess="&cess." ;
+run; 
+%mend;
+
+%split_cess_cqp(RGA,0.9);
+
+
+/**************                 TRAITE INFORCE PY               ***********/
+
+/* On n'enleve pas les frais des UEP cédés pour le traite inforce, c'est pas du new business, que 
+du run-off */
+/*  V2 DU CODE INFORCE ******/
+
+
+%macro split_cess_inforce(cess, taux);
+    data cess_py_traite_inforce_&cess.;
+    set donnees_py;
+	    cess = .; 
+        nom_cess = "&cess."; 
+        
+        
+        if gen <= 2022 and type_pret not in ("CQP") then do; 
+            if poste in("PPNA") then cess = -montant * 0.96 * &taux.; 
+            else if surv > 2022 and poste in ("PSAP") then cess = -montant * &taux.; 
+            output; 
+        end;
+
+        
+        if gen <= 2018 and type_pret = "CQP" then do;
+            if poste in("PPNA") then cess = -montant * &taux. * 0.96;
+            else if surv > 2022 and poste in ("PSAP") then cess = -montant * &taux.; 
+            output; 
+        end;
+
+        
+        if 2019 <= gen <= 2022 and type_pret = "CQP" and gar = 30 then do;
+            if poste in("PPNA") then cess = -montant * &taux. * 0.96;
+            else if surv > 2022 and poste in ("PSAP") then cess = -montant * &taux.; 
+            output; 
+        end;
+
+
+run;
+%mend;
+%split_cess_inforce(MAPFRE, 0.09);
+%split_cess_inforce(RGA, 0.45);
+%split_cess_inforce(SCOR, 0.1);
+%split_cess_inforce(ARCH, 0.05);
+
+
+
+/***************           TRAITE REASS GENERATION 2023---> 2025               **********/
+
+%macro split_cess_newb (cess,taux);
+data cess_py_newb_&cess.;
+set donnees_py ;
+cess = .; 
+nom_cess="&cess." ; 
+
+where 2023<=gen<2026;
+
+if poste in("PPNA") then cess=-montant*(1-0.276)*&taux.; 
+if poste in ("PSAP") then cess=-montant*&taux.; 
+
+
+run; 
+%mend;
+
+%split_cess_newb(RGA,0.4);
+%split_cess_newb(SCOR,0.1);
+%split_cess_newb(MAPFRE,0.1);
+%split_cess_newb(GEN_RE,0.1);
+
+
+/******************         TRAITE NEW BUSINESS GENERATION 2026             ****************/
+
+%macro split_cess_genCY (cess,taux);
+data cess_genCY_cess_&cess.;
+set donnees_gen&N.;
+where POSTE in ("PRIMES","SINISTRES","PSAP","PPNA") ;
+
+cess = .; 
+nom_cess="&cess." ;
+
+if poste in ("PRIMES","SINISTRES","PSAP","PPNA") then cess=-montant*&taux.;
+nom_cess="&cess." ; 
+run; 
+%mend;
+%split_cess_genCY(HANOVER_RE,0.15);
+%split_cess_genCY(GEN_RE,0.35);
+%split_cess_genCY(MAPFRE,0.1);
+
+
+/* CALCUL DES COMM A CEDER*/
+
+data cess_cy_commacq1;
+set cess_gency_cess_hanover_re cess_gency_cess_gen_re cess_gency_cess_mapfre ;
+where poste ="PRIMES";
+COMMACQ_CD=cess*0.2 ;
+keep idean gar surv gen nom_cess COMMACQ_CD;
+run;
+/*garder les comm cedés dans la bgd cédés date 28/05 demandé par Pierre*/
+
+data cess_cy_commacq;
+set cess_cy_commacq1;
+POSTE="COMMACQ_CD" ;
+rename COMMACQ_CD=cess ; 
+Montant=0;
+run;
+
+data cess_cy_far1 ;
+set cess_cy_commacq ;
+FAR_CD= -(((10-0)*(10-1))/(10*11))*cess;
+keep idean gar surv gen nom_cess FAR_CD;
+run; 
+
+data cess_cy_far ;
+set cess_cy_far1;
+POSTE="FAR_CD";
+rename FAR_CD=cess;
+Montant=0;
+run;
+
+
+/**************CONSOLIDATION DES SORTIES **********/
+
+data bgd_cqs_cession;
+attrib nom_cess length=$20 format=$20. informat=$20.;
+attrib IDEAN length=$20 format=$20. informat=$20.;
+set    cess_py_cqp_rga
+
+	    cess_py_traite_inforce_mapfre
+        cess_py_traite_inforce_arch
+        cess_py_traite_inforce_rga
+        cess_py_traite_inforce_scor
+        
+        cess_py_newb_gen_re 
+        cess_py_newb_mapfre
+        cess_py_newb_rga 
+        cess_py_newb_scor
+        
+        cess_gency_cess_gen_re
+        cess_gency_cess_hanover_re 
+        cess_gency_cess_mapfre
+        
+		cess_cy_commacq
+		cess_cy_far;
+run;
+
+DAta bgd_cqs_cession ;
+set bgd_cqs_cession ;
+if nom_cess="MAPFRE" then code_cess= 91;
+if nom_cess="RGA" then code_cess=187;
+if nom_cess="SCOR" then code_cess=62;
+if nom_cess="ARCH" then code_cess=100;
+if nom_cess="GEN_RE" then code_cess=75;
+if nom_cess="HANOVER_RE" then code_cess=90;
+typaff=11;
+run ;
+
+data bgd_cqs_cession_PS;
+set bgd_cqs_cession ;
+where gen=&N.;
+keep POSTE idean gen gar cess code_cess;
+run;
+
+
+
+
+/******************************************* CALCUL DE PS ********************************************************************/
+
+/******************  exporter dans la base clause avec clause ficitive que je dois dmd à Tiziana       ************************/
+/************** split par code_cess ****************************/
+
+proc sql;
+create table bgd_cession_resultat as
+select /*distinct*/ 
+sum((case when poste in ("PRIMES","ENT_PTF") then cess
+      when poste = "PPNA" then -cess else 0 end)) as GEP,
+      
+sum((case when poste ="COMMACQ_CD" then cess else 0 end)) as COMMISSIONS,
+sum((case when poste = "FAR_CD" then cess else 0 end)) as FAR_CLOT,
+sum((Case when poste = "SINISTRES" then cess else 0 end)) as SINISTRES,
+sum((case when poste in ("PSAP","PM","PSAP","PTEC") then cess else 0 end)) as Prov_clot,
+gar
+            
+      from bgd_cqs_cession
+
+      where gen=&N.
+      
+      group by gar;
+      
+quit;
+
+data bgd_cession_resultat;
+set bgd_cession_resultat;
+resultat=GEP-(COMMISSIONS-FAR_CLOT)-SINISTRES-PROV_clot;
+PS=min(0,0.8*(resultat-0.06*GEP));
+typaff=11;
+run;
+
+data bgd_cession_resultat ;
+set bgd_cession_resultat ;
+keep gar typaff PS resultat;
+run;
+
+data cle_repart;
+length cessionnaire $20;
+format gar quota_share 8.2 ;
+format code_cess 8.;
+run;
+
+/*prorata selon le quota share faut que la somme fasse 100%*/
+
+data cle_repart;
+    length cessionnaire $20;
+    length code_cess $20;
+    input gar cessionnaire code_cess quota_share;
+    datalines;
+10 GEN_RE 75 0.58
+10 HANOVER_RE 90 0.25
+10 MAPFRE 91 0.17
+30 GEN_RE 75 0.58
+30 HANOVER_RE 90 0.25
+30 MAPFRE 91 0.17
+;
+run;
+
+proc sql;
+create table bgd_cession_resultat2 
+as select a.*,
+b.quota_share , b.code_cess
+from bgd_cession_resultat a left join cle_repart b
+on a.gar=b.gar; 
+quit;
+
+
+data bgd_cession_resultat3 ;
+set bgd_cession_resultat2 ;
+resultat2=resultat*quota_share;
+PS2=PS*quota_share;
+drop resultat PS; 
+run;
+
+data bgd_PB;
+set bgd_cession_resultat3 ;
+keep gar typaff code_cess PS2; 
+rename PS2=cess;
+POSTE="PB";
+run; 
+
+data bgd_PB;
+set bgd_PB;
+POSTE="EMISS_RG";
+SURV=&N.;
+run; 
+
+data cqs_out.bgd_clause_cqs;
+set bgd_PB;
+clause ="CQS_2026";
+rename cess=Montant;
+country="IT";
+TYPIDEAN="DI";
+NIVEAU="T";
+SI="CQS";
+PERIMETRE="CQS";
+SOURCE=".";
+DEVISE="EUR";
+if poste in("EMISS_RG") and surv=&N. then VUE="FAI_CPTA&N.";
+if poste in("RG") and surv=&N. then VUE="SSI_CLOT&N.";
+
+if gar =10 then ENTITY="FACL" ;
+else if gar=30 then ENTITY="FICL";
+run; 
+
+data bgd_&exer..base_globale_normee_clause_cqs;
+set cqs_out.bgd_clause_cqs;
+run; 
+
+
+
+
+/**************************    MISE EN FORME          **********/
+
+data bgd_cqs_cession2;
+set bgd_cqs_cession;
+country="IT";
+TYPIDEAN="DI";
+NIVEAU="T";
+SI="CQS";
+PERIMETRE="CQS";
+SOURCE=".";
+DEVISE="EUR";
+if poste in("PRIMES","SINISTRES","COMMACQ_CD") and surv=&N. then VUE="FAI_CPTA&N.";
+else if poste in("PRIMES","SINISTRES","CANCEL") and surv<&N. then VUE="RAI_CPTA&N.";
+else VUE="SSI_CLOT&N.";
+if gar =10 then ENTITY="FICL" ;
+else if gar=30 then ENTITY="FACL";
+drop montant;
+run; 
+
+data bgd_cqs_cession2 ;
+set bgd_cqs_cession2 ;
+rename Cess=Montant;
+run;
+
+data bgd_cqs_cession2 ;
+set bgd_cqs_cession2 ;
+rename code_cess=cess;
+run;
+
+data bgd_cqs_cession3 ;
+set bgd_cqs_cession2 ;
+cess_num=cess*1;
+drop cess;
+rename cess_num=cess;
+run;
+
+data cqs_out.bgd_cqs_cession3 ;
+set bgd_cqs_cession3;
+run;
+
+
+
+
+/*************************CESSION DES BM DE SINISTRES ET DE PRIMES*********************************/
+/***********************************TRAITE NEW BUSINESS*****************************/
+
+/******************* SINISTRES *********************/
+
+%macro cess_newb_bm_sin (cess,taux);
+data cession_bm_sinistres_&cess.;
+set cqs_out.bgd_idean_cqs_cbp_py_all ; /*attention a changer le nom de la base chaque arrêté*/
+nom_cess="&cess." ; 
+
+where POSTE="SINISTRES" and surv in (2023,2024,2025);
+cess=-montant*&taux.;
+run; 
+%mend;
+
+%cess_newb_bm_sin (MAPFRE,0.1);
+%cess_newb_bm_sin (RGA,0.4);
+%cess_newb_bm_sin (SCOR,0.1);
+%cess_newb_bm_sin (GEN_RE,0.1);
+
+%macro cess_newb_CYo_sin (cess,taux);
+data cession_CYo_sinistres_&cess.;
+set bgd_idean_cqs_cbp_sinistres_cyo_ ; /*attention a changer le nom de la base chaque arrêté*/
+nom_cess="&cess." ; 
+
+where POSTE="SINISTRES" and surv =2026;
+cess=-montant*&taux.;
+run; 
+%mend;
+
+%cess_newb_CYo_sin (MAPFRE,0.1);
+%cess_newb_CYo_sin (RGA,0.4);
+%cess_newb_CYo_sin (SCOR,0.1);
+%cess_newb_CYo_sin (GEN_RE,0.1);
+
+
+/************************ PRIMES ********************/
+%macro cess_newb_bm_primes (cess,taux);
+data cession_bm_primes_&cess.;
+set cqs_out.bgd_idean_cqs_cbp_py_all;/*attention à la base choisie*/
+where surv>=2023 and surv<&N. and poste="PRIMES";
+cess=-montant*(1-0.276)*&taux.;
+nom_cess="&cess." ; 
+run; 
+%mend;
+
+%cess_newb_bm_primes (RGA,0.4);
+%cess_newb_bm_primes (SCOR,0.1);
+%cess_newb_bm_primes (MAPFRE,0.1);
+%cess_newb_bm_primes (GEN_RE,0.1);
+
+
+/******************** CONSOLIDATION DE LA CESSION DES BM ***************/
+
+data bgd_cqs_cession_bm ;
+set cession_bm_sinistres_gen_re
+cession_bm_sinistres_mapfre
+cession_bm_sinistres_rga
+cession_bm_sinistres_scor 
+
+cession_bm_primes_gen_re
+cession_bm_primes_mapfre
+cession_bm_primes_rga
+cession_bm_primes_scor 
+
+cession_cyo_sinistres_gen_re 
+cession_cyo_sinistres_mapfre 
+cession_cyo_sinistres_rga 
+cession_cyo_sinistres_scor;
+run; 
+
+DAta bgd_cqs_cession_bm ;
+set bgd_cqs_cession_bm ;
+if nom_cess="MAPFRE" then code_cess=91;
+if nom_cess="RGA" then code_cess=187;
+if nom_cess="SCOR" then code_cess=62;
+if nom_cess="ARCH" then code_cess=100;
+if nom_cess="GEN_RE" then code_cess=75;
+typaff=11;
+drop montant;
+rename cess=Montant;
+run;
+
+data cqs_out.bgd_cqs_cession_bm;
+set bgd_cqs_cession_bm;
+rename code_cess=CESS;
+country="IT";
+TYPIDEAN="DI";
+NIVEAU="T";
+SI="CQS";
+PERIMETRE="CQS";
+SOURCE=".";
+DEVISE="EUR";
+if surv=&N. then VUE="FAI_CPTA&N."; else VUE="RAI_CPTA&N.";
+run; 
+
+
+/************* CONSOLIDATION DES BASE PY ET CY EN VISION ULTIMATE ************/
+
+/**************** RECUPERATION DES OUV******************/
+
+data cqs_ouv_&N.;
+set bgd_&exer..bgd_idean_&exer._final_2 ;
+where VUE="SSI_OUV&N." and SI="CQS" ;
+keep TYPAFF TYPIDEAN GAR Niveau VUE SURV cess country entity Source DEVISE Montant PERIMETRE SI IDEAN POSTE ;
+run; 
+
+
+
+/****************************/
+
+data /*cqs_out.*/bgd_idean_cqs_cbp_yc_cess;
+attrib IDEAN length=$20 format=$20. informat=$20.;
+set cqs_ouv_&N.
+cqs_out.bgd_cqs_cession3 
+cqs_out.bgd_cqs_cession_bm
+cqs_out.bgd_idean_cqs_cbp1;
+drop nom_cess gen Type_Pret ;
+IF POSTE="COMMACQ_C" then POSTE="COMMACQ";
+if POSTE in("FAR_CD","FAR_C") then poste ="FAR";
+run;
+
+data cqs_out.bgd_idean_cqs_cbp_yc_cess;
+set bgd_idean_cqs_cbp_yc_cess;
+idean2=compress(idean);
+drop idean;
+rename idean2=idean;
+run;
+/********************* test**********************************/
+
+proc sql;
+create table test 
+as select 
+a.*,
+b.PMP_sales_name
+from cqs_out.bgd_idean_cqs_cbp_yc_cess a left join work.tabid_new b
+on a.idean=b.idean;
+quit;
+
+/*delete poste commacq_cd et far_cd*/
+
+DATA bgd_&exer..bgd_idean_cqs_cbp_yc_cess ;
+SET cqs_out.bgd_idean_cqs_cbp_yc_cess ;
+drop gen type_pret code_cess cess2 ;
+PERIMETRE="CQS";
+run ; 
+
+data bgd_v226.base_globale_normee_clause_cqs ;
+set bgd_v226.base_globale_normee_clause_cqs ;
+if gar =10 then ENTITY="FACL" ;
+else if gar=30 then ENTITY="FICL";
+rename code_cess=CESS;
+run ;
+
+
+
+
+
+
+
