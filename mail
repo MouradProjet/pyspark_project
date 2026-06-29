@@ -1,5 +1,20 @@
 N = 2025
 
+def cess_newb_cy_primes(cess, taux):
+    df = (spark.table(f'{_catalog}.cqs_out.bgd_idean_cqs_cbp_cy')
+        .filter(F.expr(f"""surv = {N} AND poste = 'PRIMES'"""))
+        .withColumn('cess', -F.col('montant') * (1 - 0.276) * taux)
+        .withColumn('code_cess', F.lit(cess)))
+    df.createOrReplaceTempView(f'cession_cy_primes_{cess.lower()}')
+    return df
+
+cess_newb_cy_primes(cess="RGA", taux=0.4)
+cess_newb_cy_primes(cess="SCOR", taux=0.1)
+cess_newb_cy_primes(cess="MAPFRE", taux=0.1)
+cess_newb_cy_primes(cess="GEN_RE", taux=0.1)
+
+N = 2025
+
 def cess_newb_cy_sin(cess, taux):
     df = (spark.table(f'{_catalog}.cqs_out.bgd_idean_cqs_cbp_cy')
         .filter(F.expr(f"""surv = {N} AND poste = 'SINISTRES'"""))
