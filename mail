@@ -1,3 +1,19 @@
+N = 2025
+
+def cess_newb_cy_sin(cess, taux):
+    df = (spark.table(f'{_catalog}.cqs_out.bgd_idean_cqs_cbp_cy')
+        .filter(F.expr(f"""surv = {N} AND poste = 'SINISTRES'"""))
+        .withColumn('cess', -F.col('montant') * taux)
+        .withColumn('code_cess', F.lit(cess)))
+    df.createOrReplaceTempView(f'cession_cy_sinistres_{cess.lower()}')
+    return df
+
+cess_newb_cy_sin(cess="RGA", taux=0.4)
+cess_newb_cy_sin(cess="SCOR", taux=0.1)
+cess_newb_cy_sin(cess="MAPFRE", taux=0.1)
+cess_newb_cy_sin(cess="GEN_RE", taux=0.1)
+
+
 join_keys = ['typaff', 'typidean', 'idean', 'gar', 'poste', 'niveau',
              'cess', 'country', 'Entity', 'DEVISE']
 
