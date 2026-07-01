@@ -1,3 +1,25 @@
+
+    # PROC TRANSPOSE — GEP wide-to-long
+    _gep_stack = ', '.join(f"'GEP_{gar}{k}', `GEP_{gar}{k}`" for k in range(16))
+    _dfs[f'CQS_GEP_{gar}_2'] = _dfs[f'CQS_GEP_{gar}'].select(
+        'Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce',
+        'Date_Fin_Assce', 'Date_Sin', 'Generation', 'date_rachat', 'Date_Rachat2',
+        f'Primes_{gar}', f'Rachat_{gar}', 'Date_term', 'term', 'term_expoff',
+        'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret',
+        F.expr(f"""stack(16, {_gep_stack}) as (variable, GEP)"""))
+    _dfs[f'CQS_GEP_{gar}_2'].createOrReplaceTempView(f'CQS_GEP_{gar}_2')
+    #print(spark.table(f'CQS_GEP_{gar}_2').count())
+    # PROC TRANSPOSE — UEP_PL wide-to-long
+    _uep_stack = ', '.join(f"'UEP_PL_{gar}{k}', `UEP_PL_{gar}{k}`" for k in range(16))
+    _dfs[f'CQS_UEP_PL__{gar}_2'] = _dfs[f'CQS_UEP_PL__{gar}'].select(
+        'Financiere_Adh', 'ID_Police', 'sit_prof_1', 'ID_Adh', 'Date_Dbt_Assce',
+        'Date_Fin_Assce', 'Date_Sin', 'Generation', 'date_rachat', 'Date_Rachat2',
+        f'Primes_{gar}', f'Rachat_{gar}', 'Date_term', 'term', 'term_expoff',
+        'Mois_fin_annee', 'Quotient_res', 'mois_rest', 'type_pret',
+        F.expr(f"""stack(16, {_uep_stack}) as (variable, UEP_PL)"""))
+
+
+
 from pyspark.sql import functions as F
 
 by_cols = ["Financiere_Adh","ID_Police","sit_prof_1","ID_Adh","Date_Dbt_Assce",
