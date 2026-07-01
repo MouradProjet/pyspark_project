@@ -1,3 +1,22 @@
+from pyspark.sql import functions as F
+
+by_cols = ["Financiere_Adh","ID_Police","sit_prof_1","ID_Adh","Date_Dbt_Assce",
+           "Date_Fin_Assce","Date_Sin","Generation","Date_Rachat",
+           f"Primes_{gar}",f"Rachat_{gar}","Date_term","term","term_expoff",
+           "Mois_fin_annee","Quotient_res","mois_rest","type_pret"]
+
+var_cols = [f"GEP_{gar}{i}" for i in range(16)]   # GEP_&gar.0 .. GEP_&gar.15
+
+out = (df.unpivot(
+            ids=by_cols,
+            values=var_cols,
+            variableColumnName="_NAME_",
+            valueColumnName="COL1")
+         .filter(F.col("COL1").isNotNull()))   # <-- reproduit le comportement SAS
+
+
+
+df.groupBy(by_cols).count().filter("count > 1").show()
 N = 2025
 
 def cess_newb_cy_primes(cess, taux):
