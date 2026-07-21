@@ -1,3 +1,8 @@
+df = spark.read \
+    .format("com.github.saurfang.sas.spark") \
+    .load("/Volumes/actuariat_dev/cqs/sources/test.sas7bdat")
+
+
 import re, unicodedata
 
 def clean_column_names(df):
