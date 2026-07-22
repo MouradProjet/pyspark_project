@@ -1,3 +1,41 @@
+
+# Arrondi des colonnes numériques à 2 décimales avant comparaison, pour éviter
+# les faux positifs liés aux écarts de précision flottante entre SAS et Spark.
+NB_DECIMALES = 2
+types_numeriques = ("double", "float", "decimal")
+ 
+colonnes_numeriques = [
+    c for c in colonnes_communes
+    if any(types_sas.get(c, "").startswith(t) for t in types_numeriques)
+    or any(types_table.get(c, "").startswith(t) for t in types_numeriques)
+]
+ 
+for c in colonnes_numeriques:
+    df_sas_norm = df_sas_norm.withColumn(c, F.round(F.col(c).cast("double"), NB_DECIMALES))
+    df_table_norm = df_table_norm.withColumn(c, F.round(F.col(c).cast("double"), NB_DECIMALES))
+ 
+if colonnes_numeriques:
+    print(f"Colonnes numériques arrondies à {NB_DECIMALES} décimales : {colonnes_numeriques}")
+ 
+# Lignes présentes dans SAS mais absentes (ou différentes) dans la table cible
+lignes_manquantes_dans_table = df_sas_norm.exceptAll(df_table_norm)
+ 
+# Lignes présentes dans la table cible mais absentes (ou différentes) du SAS
+lignes_en_trop_dans_table = df_table_norm.exceptAll(df_sas_norm)
+ 
+nb_manquantes = lignes_manquantes_dans_table.count()
+nb_en_trop = lignes_en_trop_dans_table.count()
+ 
+print(f"Lignes présentes dans SAS et absentes/différentes dans la table cible : {nb_manquantes}")
+print(f"Lignes présentes dans la table cible et absentes/différentes du SAS   : {nb_en_trop}")
+ 
+if nb_manquantes == 0 and nb_en_trop == 0:
+    print("\n✅ Les deux jeux de données sont identiques sur les colonnes communes.")
+else:
+    print("\n⚠️ Des différences ont été détectées, voir sections suivantes.")
+ 
+#
+
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Comparaison SAS7BDAT vs Table Databricks
