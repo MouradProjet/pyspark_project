@@ -1,0 +1,240 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # Comparaison SAS7BDAT vs Table Databricks
+# MAGIC
+# MAGIC Ce notebook compare un fichier source `.sas7bdat` avec une table cible sur Databricks
+# MAGIC (résultat de la migration SAS -> PySpark), afin de valider la migration :
+# MAGIC - Nombre de lignes
+# MAGIC - Nombre de colonnes (et noms de colonnes)
+# MAGIC - Différences de données ligne à ligne
+# MAGIC
+# MAGIC Nécessite le JAR `spark-sas7bdat` chargé sur le cluster (cf. config déjà en place pour le projet CQS).
+
+# COMMAND ----------
+
+# MAGIC %md ## 1. Paramètres
+
+# COMMAND ----------
+
+dbutils.widgets.text("chemin_sas7bdat", "/Volumes/dev_actuariat/landing/cqs/exemple.sas7bdat", "Chemin fichier SAS")
+dbutils.widgets.text("table_cible", "dev_actuariat.silver.cqs__exemple", "Table Databricks cible")
+dbutils.widgets.text("colonnes_cles", "", "Colonnes clés (séparées par virgule, optionnel)")
+
+chemin_sas7bdat = dbutils.widgets.get("chemin_sas7bdat")
+table_cible = dbutils.widgets.get("table_cible")
+colonnes_cles_raw = dbutils.widgets.get("colonnes_cles").strip()
+colonnes_cles = [c.strip() for c in colonnes_cles_raw.split(",") if c.strip()] if colonnes_cles_raw else None
+
+print(f"Fichier SAS   : {chemin_sas7bdat}")
+print(f"Table cible   : {table_cible}")
+print(f"Colonnes clés : {colonnes_cles if colonnes_cles else '(aucune - comparaison par jeu de lignes complet)'}")
+
+# COMMAND ----------
+
+# MAGIC %md ## 2. Lecture des deux sources
+
+# COMMAND ----------
+
+from pyspark.sql import functions as F
+
+# Lecture du fichier SAS via le connecteur spark-sas7bdat
+df_sas = (
+    spark.read.format("com.github.saurfang.sas.spark")
+    .load(chemin_sas7bdat)
+)
+
+# Lecture de la table Databricks (résultat de la migration)
+df_table = spark.table(table_cible)
+
+df_sas.cache()
+df_table.cache()
+
+print("Lecture terminée.")
+
+# COMMAND ----------
+
+# MAGIC %md ## 3. Nombre de lignes et de colonnes
+
+# COMMAND ----------
+
+nb_lignes_sas = df_sas.count()
+nb_lignes_table = df_table.count()
+
+nb_colonnes_sas = len(df_sas.columns)
+nb_colonnes_table = len(df_table.columns)
+
+print("=== SAS7BDAT ===")
+print(f"Lignes   : {nb_lignes_sas}")
+print(f"Colonnes : {nb_colonnes_sas}")
+
+print("\n=== Table Databricks ===")
+print(f"Lignes   : {nb_lignes_table}")
+print(f"Colonnes : {nb_colonnes_table}")
+
+print("\n=== Écarts ===")
+print(f"Écart lignes   : {nb_lignes_table - nb_lignes_sas}")
+print(f"Écart colonnes : {nb_colonnes_table - nb_colonnes_sas}")
+
+# COMMAND ----------
+
+# MAGIC %md ## 4. Comparaison des colonnes (noms / types)
+
+# COMMAND ----------
+
+# Normalisation des noms de colonnes en majuscules pour la comparaison
+# (SAS est souvent insensible à la casse, PySpark est sensible)
+cols_sas = set(c.upper() for c in df_sas.columns)
+cols_table = set(c.upper() for c in df_table.columns)
+
+colonnes_absentes_dans_table = sorted(cols_sas - cols_table)
+colonnes_en_trop_dans_table = sorted(cols_table - cols_sas)
+colonnes_communes = sorted(cols_sas & cols_table)
+
+print(f"Colonnes présentes dans SAS mais absentes de la table cible ({len(colonnes_absentes_dans_table)}) :")
+print(colonnes_absentes_dans_table)
+
+print(f"\nColonnes présentes dans la table cible mais absentes de SAS ({len(colonnes_en_trop_dans_table)}) :")
+print(colonnes_en_trop_dans_table)
+
+print(f"\nColonnes communes : {len(colonnes_communes)}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Types de colonnes (sur les colonnes communes)
+
+# COMMAND ----------
+
+types_sas = {c.upper(): t for c, t in df_sas.dtypes}
+types_table = {c.upper(): t for c, t in df_table.dtypes}
+
+ecarts_types = [
+    (c, types_sas.get(c), types_table.get(c))
+    for c in colonnes_communes
+    if types_sas.get(c) != types_table.get(c)
+]
+
+if ecarts_types:
+    print("Écarts de type détectés :")
+    for col, t_sas, t_table in ecarts_types:
+        print(f"  - {col} : SAS={t_sas} | Table={t_table}")
+else:
+    print("Aucun écart de type sur les colonnes communes.")
+
+# COMMAND ----------
+
+# MAGIC %md ## 5. Comparaison des données
+# MAGIC
+# MAGIC On aligne les deux DataFrames sur les colonnes communes (mêmes noms, en majuscules)
+# MAGIC puis on calcule les différences dans les deux sens avec `exceptAll` (garde les doublons,
+# MAGIC contrairement à `except`/`subtract`).
+
+# COMMAND ----------
+
+def renommer_en_majuscules(df):
+    for c in df.columns:
+        df = df.withColumnRenamed(c, c.upper())
+    return df
+
+df_sas_norm = renommer_en_majuscules(df_sas).select(*colonnes_communes)
+df_table_norm = renommer_en_majuscules(df_table).select(*colonnes_communes)
+
+# Lignes présentes dans SAS mais absentes (ou différentes) dans la table cible
+lignes_manquantes_dans_table = df_sas_norm.exceptAll(df_table_norm)
+
+# Lignes présentes dans la table cible mais absentes (ou différentes) du SAS
+lignes_en_trop_dans_table = df_table_norm.exceptAll(df_sas_norm)
+
+nb_manquantes = lignes_manquantes_dans_table.count()
+nb_en_trop = lignes_en_trop_dans_table.count()
+
+print(f"Lignes présentes dans SAS et absentes/différentes dans la table cible : {nb_manquantes}")
+print(f"Lignes présentes dans la table cible et absentes/différentes du SAS   : {nb_en_trop}")
+
+if nb_manquantes == 0 and nb_en_trop == 0:
+    print("\n✅ Les deux jeux de données sont identiques sur les colonnes communes.")
+else:
+    print("\n⚠️ Des différences ont été détectées, voir sections suivantes.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Aperçu des lignes en écart
+
+# COMMAND ----------
+
+print("Exemples de lignes SAS absentes/différentes dans la table cible :")
+display(lignes_manquantes_dans_table.limit(50))
+
+# COMMAND ----------
+
+print("Exemples de lignes de la table cible absentes/différentes du SAS :")
+display(lignes_en_trop_dans_table.limit(50))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 6. (Optionnel) Comparaison ligne à ligne par clé
+# MAGIC
+# MAGIC Si des colonnes clés sont renseignées dans le widget `colonnes_cles`, on fait un `join`
+# MAGIC sur ces clés pour identifier, colonne par colonne, les valeurs qui diffèrent
+# MAGIC (utile pour localiser précisément l'écart plutôt que juste savoir que la ligne diffère).
+
+# COMMAND ----------
+
+if colonnes_cles:
+    cles_maj = [c.upper() for c in colonnes_cles]
+    manquantes = [c for c in cles_maj if c not in colonnes_communes]
+    if manquantes:
+        print(f"⚠️ Colonnes clés absentes des colonnes communes : {manquantes}. Étape ignorée.")
+    else:
+        df_sas_k = df_sas_norm.withColumnRenamed if False else df_sas_norm
+        for c in colonnes_communes:
+            if c not in cles_maj:
+                df_sas_norm = df_sas_norm.withColumnRenamed(c, f"{c}_SAS")
+        for c in colonnes_communes:
+            if c not in cles_maj:
+                df_table_norm = df_table_norm.withColumnRenamed(c, f"{c}_TABLE")
+
+        df_join = df_sas_norm.join(df_table_norm, on=cles_maj, how="full_outer")
+
+        colonnes_valeurs = [c for c in colonnes_communes if c not in cles_maj]
+
+        conditions_diff = [
+            F.coalesce(F.col(f"{c}_SAS") != F.col(f"{c}_TABLE"), F.lit(True))
+            for c in colonnes_valeurs
+        ]
+
+        if conditions_diff:
+            condition_globale = conditions_diff[0]
+            for cond in conditions_diff[1:]:
+                condition_globale = condition_globale | cond
+
+            df_diff_par_cle = df_join.filter(condition_globale)
+            print(f"Lignes en écart (par clé) : {df_diff_par_cle.count()}")
+            display(df_diff_par_cle.limit(50))
+        else:
+            print("Aucune colonne de valeur à comparer en dehors des clés.")
+else:
+    print("Aucune colonne clé renseignée : étape de comparaison par clé ignorée.")
+
+# COMMAND ----------
+
+# MAGIC %md ## 7. Synthèse
+
+# COMMAND ----------
+
+synthese = spark.createDataFrame(
+    [
+        ("Nombre de lignes", str(nb_lignes_sas), str(nb_lignes_table), str(nb_lignes_table - nb_lignes_sas)),
+        ("Nombre de colonnes", str(nb_colonnes_sas), str(nb_colonnes_table), str(nb_colonnes_table - nb_colonnes_sas)),
+        ("Colonnes absentes de la table cible", "-", "-", str(len(colonnes_absentes_dans_table))),
+        ("Colonnes en trop dans la table cible", "-", "-", str(len(colonnes_en_trop_dans_table))),
+        ("Écarts de type", "-", "-", str(len(ecarts_types))),
+        ("Lignes SAS absentes/différentes de la table", "-", "-", str(nb_manquantes)),
+        ("Lignes table absentes/différentes du SAS", "-", "-", str(nb_en_trop)),
+    ],
+    ["Indicateur", "SAS", "Table", "Écart"],
+)
+
+display(synthese)
