@@ -1,4 +1,40 @@
-
+def renommer_en_majuscules(df):
+    for c in df.columns:
+        df = df.withColumnRenamed(c, c.upper())
+    return df
+ 
+if colonnes_cles:
+    cles_maj_check = [c.upper() for c in colonnes_cles]
+    cols_sas_maj = set(c.upper() for c in df_sas.columns)
+    manquantes_check = [c for c in cles_maj_check if c not in cols_sas_maj]
+ 
+    if manquantes_check:
+        raise ValueError(
+            f"Colonnes clés absentes du fichier SAS : {manquantes_check}"
+        )
+ 
+    df_sas_doublons = renommer_en_majuscules(df_sas)
+ 
+    df_doublons = (
+        df_sas_doublons.groupBy(*cles_maj_check)
+        .count()
+        .filter(F.col("count") > 1)
+    )
+ 
+    nb_cles_dupliquees = df_doublons.count()
+ 
+    if nb_cles_dupliquees > 0:
+        print(f"❌ {nb_cles_dupliquees} combinaison(s) de clés en doublon dans le fichier SAS :")
+        display(df_doublons.orderBy(F.desc("count")).limit(50))
+        raise ValueError(
+            f"Le fichier SAS contient {nb_cles_dupliquees} combinaison(s) de clés "
+            f"{cles_maj_check} en doublon. Corrigez la source ou revoyez les colonnes "
+            f"clés avant de poursuivre la comparaison."
+        )
+    else:
+        print(f"✅ Aucun doublon sur les colonnes clés {cles_maj_check} dans le fichier SAS.")
+else:
+    print("Aucune colonne clé renseignée : contrôle des doublons ignoré.")
 # Arrondi des colonnes numériques à 2 décimales avant comparaison, pour éviter
 # les faux positifs liés aux écarts de précision flottante entre SAS et Spark.
 NB_DECIMALES = 2
