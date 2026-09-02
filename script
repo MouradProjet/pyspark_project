@@ -1,0 +1,36 @@
+Voici la liste des 25 scripts (.sas) contenus dans l'archive, organisés par dossier :
+
+**Flux reels (Databases)**
+- 0-Export Datalake CLP.sas
+- 1 Split_Country_PL.sas
+- 2 Extractions PL.sas
+- Check_Data_TIA.sas
+
+**GEP**
+- 01_Param_Ruling_Reass.sas
+- 02_Import policy.sas
+- A recetter/03_GEP_BLK_HUB.sas
+- A recetter/04_GEP_MF_HUB.sas
+- A recetter/05_GEP_MR_RUN_PAR.sas
+- A recetter/09_GEP_UPF_HUB.sas
+
+**Reporting TIA**
+- Programme_Reporting_Q226.sas
+
+**RESERVES**
+- CLAIMS HANDLING DATA/CH%.sas
+- NON-CORE-COVER/NCC_prgm_final.sas
+- ON-SYSTEM/CASES RESERVES/1_DATADOWNLOAD.sas
+- ON-SYSTEM/CASES RESERVES/2_Legal_entity_split.sas
+- ON-SYSTEM/CASES RESERVES/3_Parametres.sas
+- ON-SYSTEM/CASES RESERVES/4_Data Correction.sas
+- ON-SYSTEM/CASES RESERVES/5_Reserving Module.sas
+- ON-SYSTEM/CASES RESERVES/6_DataLake_file.sas
+- ON-SYSTEM/CASES RESERVES/Claims Reserves Mvt.sas
+- ON-SYSTEM/IBNR/1_Claim_IBNR.sas
+- ON-SYSTEM/IBNR/2_Extraction_claim&REP.sas
+- ON-SYSTEM/IBNR/3_Earned_Premium.sas
+- ON-SYSTEM/IBNR/4_IBNR_Split.sas
+- REPORTING/Controles/A_Rsrv_mvt.sas
+
+Ce sont tous des scripts SAS (.sas), aucun autre type de fichier n'est présent dans l'archive. Voulez-vous que j'exporte cette liste dans un fichier, ou que j'aille voir le contenu de certains scripts en particulier ?
