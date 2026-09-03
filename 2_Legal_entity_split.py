@@ -21,6 +21,7 @@ def entity(pays):
         Case when uw_company = '101' then 'FICL' else 'FACL' end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # LT
     if pays == 'LT':
@@ -30,6 +31,7 @@ def entity(pays):
         Case when uw_company = '101' then 'FICL' else 'FACL' end as Legal_Entity
         FROM Data.LT_CLMHDR""")
         LT_CLMHDR.createOrReplaceTempView('LT_CLMHDR')
+        LT_CLMHDR.write.mode('overwrite').saveAsTable('data.LT_CLMHDR')
     
     # LV
     if pays == 'LV':
@@ -38,6 +40,7 @@ def entity(pays):
         Case when uw_company = '101' then 'FICL' else 'FACL' end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # ESTONIA
     if pays == 'EE':
@@ -46,6 +49,7 @@ def entity(pays):
         Case when uw_company = '101' then 'FICL' else 'FACL' end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # AUTRICHE
     if pays == 'AT':
@@ -54,6 +58,7 @@ def entity(pays):
         Case when uw_company = '101' then 'FICL' else 'FACL' end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # BELGIUM
     if pays == 'BE':
@@ -62,6 +67,7 @@ def entity(pays):
         Case when uw_company = '101' then 'FICL' else 'FACL' end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # COLOMBIA
     if pays == 'CO':
@@ -70,6 +76,7 @@ def entity(pays):
         Case when uw_company IN ('901','971') then 'FICL' else 'FACL' end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # DENMARK
     if pays == 'DK':
@@ -88,6 +95,7 @@ def entity(pays):
         end end  as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
         _dfs[f'{pays}_CLMHDR'] = spark.table(f'data.{pays}_CLMHDR')
         _dfs[f'{pays}_CLMHDR'] = (_dfs[f'{pays}_CLMHDR']
@@ -117,6 +125,7 @@ def entity(pays):
         else 'UNKNOWN' end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
         _dfs[f'{pays}_CLMHDR'] = spark.table(f'data.{pays}_CLMHDR')
         _dfs[f'{pays}_CLMHDR'] = (_dfs[f'{pays}_CLMHDR']
@@ -144,6 +153,7 @@ def entity(pays):
         
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # GERMANY
     if pays == 'DE':
@@ -159,6 +169,7 @@ def entity(pays):
         
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # GREECE
     if pays == 'GR':
@@ -169,6 +180,7 @@ def entity(pays):
         end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # IRELAND
     if pays == 'IE':
@@ -189,6 +201,7 @@ def entity(pays):
         
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # ITALY
     if pays == 'IT':
@@ -205,6 +218,7 @@ def entity(pays):
         end end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # NETHERLANDS
     if pays == 'NL':
@@ -215,6 +229,7 @@ def entity(pays):
         end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # NORTHERN IRELAND
     if pays == 'NI':
@@ -225,6 +240,7 @@ def entity(pays):
         end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # NORWAY
     if pays == 'NO':
@@ -235,6 +251,7 @@ def entity(pays):
         end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
         _dfs[f'{pays}_CLMHDR'] = spark.table(f'data.{pays}_CLMHDR')
         _dfs[f'{pays}_CLMHDR'] = (_dfs[f'{pays}_CLMHDR']
@@ -256,6 +273,7 @@ def entity(pays):
          end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # PORTUGAL
     if pays == 'PT':
@@ -270,6 +288,7 @@ def entity(pays):
         end end end  as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # SPAIN
     if pays == 'ES':
@@ -282,6 +301,7 @@ def entity(pays):
         end end  as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # SWEDEN
     if pays == 'SE':
@@ -297,6 +317,7 @@ def entity(pays):
         end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
         _dfs[f'{pays}_CLMHDR'] = spark.table(f'data.{pays}_CLMHDR')
         _dfs[f'{pays}_CLMHDR'] = (_dfs[f'{pays}_CLMHDR']
@@ -316,6 +337,7 @@ def entity(pays):
         end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # TURKEY
     if pays == 'TR':
@@ -327,6 +349,7 @@ def entity(pays):
         end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     # UK
     if pays == 'UK':
@@ -341,6 +364,7 @@ def entity(pays):
         end end end as Legal_Entity
         FROM Data.{pays}_CLMHDR""")
         _dfs[f'{pays}_CLMHDR'].createOrReplaceTempView(f'{pays}_CLMHDR')
+        _dfs[f'{pays}_CLMHDR'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMHDR')
     
     _dfs[f'{pays}_CLMHDR'] = spark.table(f'data.{pays}_CLMHDR')
     _dfs[f'{pays}_CLMHDR'] = (_dfs[f'{pays}_CLMHDR']
@@ -379,6 +403,7 @@ def entity(pays):
     FROM DATA.{pays}_CLMTRNS p
     LEFT JOIN Data.{pays}_CLMHDR q on p.CLA_CASE_NO=q.CLA_CASE_NO """)
     _dfs[f'{pays}_CLMTRNS'].createOrReplaceTempView(f'{pays}_CLMTRNS')
+    _dfs[f'{pays}_CLMTRNS'].write.mode('overwrite').saveAsTable(f'data.{pays}_CLMTRNS')
 
 
 entity(pays="FI")
@@ -411,3 +436,4 @@ p.*, q.Legal_Entity
 FROM DATA.LT_CLMTRNS p
 LEFT JOIN Data.LT_CLMHDR q on p.CLA_CASE_NO=q.CLA_CASE_NO """)
 LT_CLMTRNS.createOrReplaceTempView('LT_CLMTRNS')
+LT_CLMTRNS.write.mode('overwrite').saveAsTable('data.LT_CLMTRNS')
