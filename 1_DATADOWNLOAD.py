@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-EXTRACTION CLAIMS DU DATA LAKE
-Construit les bases CLMHDR & CLMTRNS (cases reserves ICOP & RBNP)
-Traduction PySpark du programme SAS d'origine (ALSENY SOW, 2018).
+EXTRACTION CLAIMS — construction des bases CLMHDR & CLMTRNS
+(cases reserves ICOP & RBNP)
 
-Ce script est du CODE D'INFRASTRUCTURE (extraction depuis une base externe
-WPS_SHINE_BLCL via JDBC). La logique de connexion doit être adaptée à votre
-environnement Databricks (URL, driver, secrets).
+Version Databricks : les tables sources du data lake sont DÉJÀ disponibles
+dans le catalogue Databricks (schéma 'claim'), donc pas de connexion ODBC/JDBC.
+On lit directement avec spark.table().
 """
 
 from pyspark.sql import functions as F
@@ -15,57 +14,27 @@ from pyspark.sql import SparkSession
 spark = SparkSession.builder.getOrCreate()
 
 # ═══════════════════════════════════════════════════════════════════════
-# PARAMÈTRES — à compléter par l'utilisateur
+# PARAMÈTRES
 # ═══════════════════════════════════════════════════════════════════════
-arrete    = "2026_06_Prov"
-data_path = (f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}"
-             f"/02_Elements_Techniques/TIA/Extraction Donnees/Claims Extracts")
+arrete = "2026_06_Prov"
 
-# Schéma cible pour les tables extraites (remplace le LIBNAME 'data')
-spark.sql("CREATE SCHEMA IF NOT EXISTS data")
+# Schémas Databricks
+SOURCE_SCHEMA = "claim"   # où sont les tables sources (ex-LIBNAME CLAIM2 ODBC)
+TARGET_SCHEMA = "data"    # où écrire les tables résultat (ex-LIBNAME data)
 
-# ═══════════════════════════════════════════════════════════════════════
-# CONNEXION AU DATA LAKE (ex-LIBNAME CLAIM / CLAIM2 ODBC → JDBC Spark)
-# ═══════════════════════════════════════════════════════════════════════
-# Le SAS utilisait une connexion ODBC vers WPS_SHINE_BLCL, schéma
-# 'global_claims_extracts'. En Databricks, on lit via JDBC.
-# ADAPTEZ ces paramètres à votre environnement (URL, driver, identifiants).
-#
-# Idéalement, stockez les identifiants dans un secret scope Databricks :
-#   dbutils.secrets.get(scope="wps", key="jdbc-url")
-JDBC_URL    = "jdbc:db2://<host>:<port>/WPS_SHINE_BLCL"   # TODO: à renseigner
-JDBC_DRIVER = "com.ibm.db2.jcc.DB2Driver"                 # TODO: driver réel
-JDBC_USER   = dbutils.secrets.get(scope="wps", key="user")      # TODO
-JDBC_PWD    = dbutils.secrets.get(scope="wps", key="password")  # TODO
-SOURCE_SCHEMA = "global_claims_extracts"
-
-
-def read_claim_table(table_name):
-    """Lit une table du data lake claims via JDBC."""
-    return (spark.read.format("jdbc")
-            .option("url", JDBC_URL)
-            .option("driver", JDBC_DRIVER)
-            .option("user", JDBC_USER)
-            .option("password", JDBC_PWD)
-            .option("dbtable", f"{SOURCE_SCHEMA}.{table_name}")
-            .load())
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {TARGET_SCHEMA}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # FONCTION D'EXTRACTION PAR PAYS
 # ═══════════════════════════════════════════════════════════════════════
 def datadownload_dtw(pays):
-    """Extrait et normalise les bases claim header (CLMHDR) et detail
-    (CLMTRNS) pour un pays donné."""
+    """Construit les bases CLMHDR (en-têtes) et CLMTRNS (détail) pour un pays."""
 
     # ── CLMHDR : en-têtes de sinistres ─────────────────────────────────
-    # 1. Copie brute de la table source vers le schéma 'data'
-    claim_header = read_claim_table(f"{pays}_claim_head_tiariadmin")
-    claim_header.write.mode("overwrite").saveAsTable(f"data.{pays}_claim_header")
-
-    # 2. Sélection normalisée (dates converties, colonnes utiles)
-    #    Les format=/length= du SAS sont supprimés (inutiles en Spark) ;
-    #    datepart() → to_date() car les colonnes source sont des timestamps.
+    # Sélection normalisée directement depuis la table source.
+    # format=/length= du SAS supprimés (inutiles en Spark) ;
+    # datepart() → to_date() (les colonnes source sont des timestamps).
     clmhdr = spark.sql(f"""
         SELECT
             COUNTRY_CD                      AS Country,
@@ -109,14 +78,11 @@ def datadownload_dtw(pays):
             PROD_ID,
             cause_code,
             informer_type
-        FROM data.{pays}_claim_header
+        FROM {SOURCE_SCHEMA}.{pays}_claim_head_tiariadmin
     """)
-    clmhdr.write.mode("overwrite").saveAsTable(f"data.{pays}_CLMHDR")
+    clmhdr.write.mode("overwrite").saveAsTable(f"{TARGET_SCHEMA}.{pays}_CLMHDR")
 
     # ── CLMTRNS : détail des transactions de sinistres ─────────────────
-    claim_detail = read_claim_table(f"{pays}_claim_det_tiariadmin")
-    claim_detail.write.mode("overwrite").saveAsTable(f"data.{pays}_claim_detail")
-
     clmtrns = spark.sql(f"""
         SELECT
             COUNTRY_CD                      AS Country,
@@ -129,9 +95,9 @@ def datadownload_dtw(pays):
             to_date(DUE_DATE)               AS DUE_DATE,
             SUBITEM_TYPE,
             ACC_ITEM_NO
-        FROM data.{pays}_claim_detail
+        FROM {SOURCE_SCHEMA}.{pays}_claim_det_tiariadmin
     """)
-    clmtrns.write.mode("overwrite").saveAsTable(f"data.{pays}_CLMTRNS")
+    clmtrns.write.mode("overwrite").saveAsTable(f"{TARGET_SCHEMA}.{pays}_CLMTRNS")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -153,18 +119,18 @@ for pays in pays_list:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# CORRECTION UK : le code pays source est 'GB', on le normalise en 'UK'
+# CORRECTION UK : le code pays source est 'GB', normalisé en 'UK'
 # ═══════════════════════════════════════════════════════════════════════
-uk_clmhdr = (spark.table("data.UK_CLMHDR")
+uk_clmhdr = (spark.table(f"{TARGET_SCHEMA}.UK_CLMHDR")
              .withColumn("Country",
                  F.when(F.col("Country") == "GB", F.lit("UK"))
                   .otherwise(F.col("Country"))))
-uk_clmhdr.write.mode("overwrite").saveAsTable("data.UK_CLMHDR")
+uk_clmhdr.write.mode("overwrite").saveAsTable(f"{TARGET_SCHEMA}.UK_CLMHDR")
 
-uk_clmtrns = (spark.table("data.UK_CLMTRNS")
+uk_clmtrns = (spark.table(f"{TARGET_SCHEMA}.UK_CLMTRNS")
               .withColumn("Country",
                   F.when(F.col("Country") == "GB", F.lit("UK"))
                    .otherwise(F.col("Country"))))
-uk_clmtrns.write.mode("overwrite").saveAsTable("data.UK_CLMTRNS")
+uk_clmtrns.write.mode("overwrite").saveAsTable(f"{TARGET_SCHEMA}.UK_CLMTRNS")
 
 print("Extraction claims terminée.")
