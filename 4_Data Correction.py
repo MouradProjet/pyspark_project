@@ -28,9 +28,26 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {INPUT_SCHEMA}")
 # balancedate comme littéral date Spark, réutilisé dans les requêtes
 BAL = f"DATE'{balancedate}'"
 
+# Chemin du fichier Entity_Mappings (commun à tous les pays)
+IMPORT_03 = (f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}"
+             f"/02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM"
+             f"/CASES RESERVES/Model Properties/Entity_Mappings.xlsx")
+
+
+def import_excel(fichier, feuille, vue):
+    """Lit une feuille d'un fichier Excel dans une temp view."""
+    df = (spark.read.format("com.crealytics.spark.excel")
+          .option("dataAddress", f"'{feuille}'!A1")
+          .option("header", "true")
+          .load(fichier))
+    df.createOrReplaceTempView(vue)
+
 
 def data_correction(pays):
     """Corrige et met en forme les claims d'un pays."""
+
+    # ── Import du mapping Entity (feuille Entity_Mappings) ──────────────
+    import_excel(IMPORT_03, "Entity_Mappings", "Entity_Mappings")
 
     # ═══════════════════════════════════════════════════════════════════
     # 1. CLMHDR_0 : sélection + normalisation des dates
