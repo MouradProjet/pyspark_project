@@ -1,626 +1,466 @@
+# -*- coding: utf-8 -*-
+"""
+EXTRACTION CLAIMS DU DATA LAKE — Correction & mise en forme
+Construit les bases CLMHDR & CLMTRNS pour le calcul des cases reserves (ICOP & RBNP).
+Auteur original SAS : ALSENY SOW. Traduction PySpark manuelle propre.
+
+Prérequis : les tables data.{pays}_CLMHDR, data.{pays}_CLMTRNS et les tables
+de paramètres ({pays}_RESERVE_GROUP_SPEC, {pays}_MNTHLY_BNFT_LIMITS,
+{pays}_OTSTANDING_BLNC_LIMITS, {pays}_TRANS_TYPE_MAP, {pays}_SCHEME_DATABASE)
+sont déjà disponibles dans le catalogue Databricks.
+"""
+
 from pyspark.sql import functions as F
-from pyspark.sql import Window
 from pyspark.sql import SparkSession
-from pyspark.sql.types import *
-import datetime
+
 spark = SparkSession.builder.getOrCreate()
-_dfs = {}  # container for DataFrames with dynamic names (macro variables)
 
-# #################################################################################################################################################################################
-# ##########################################################       EXTRACTION CLAIMS DU DATA LAKE   ########################################################################################
-# ################################################################################################################################################################################
-# ######## Name: EXTRACTION CLAIMS DU DATA LAKE
-# ######## Author: ALSENY SOW
-# ######## Date started :26/06/2018
-# ######## Date finished:
-# ######## Context: MISE EN FORE & CORRECTION DES CLAIMS QUI PERMETTENT DE CALCULER LES CASES RESERVES (ICOP & RBNP)
-# #####################################################  CREATION DES LIBRARY  #########################################################################################
-lreseau = "X"
-# Lettre du serveur "Inventprev" attention au majuscule et minuscule
-arrete = "2026_06_Prov"
-balancedate = "26/06/2026"
-data_path = f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_Techniques/TIA/Extraction Donnees/Claims Extracts"  # LIBNAME data
-input_path = f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM/CASES RESERVES/Input"  # LIBNAME input
-spark.sql('CREATE SCHEMA IF NOT EXISTS input')  # base Spark pour LIBNAME input
-# /
-# Macro Corection data - Claims Extract
-# /
-def data_corecction(pays):
-    # %LET pays =PT ;
-    import_03 = f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM/CASES RESERVES/Model Properties/Entity_Mappings.xlsx"
-        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
-            .option('dataAddress', f'{onglet}!A1')
-            .option('header', 'true')
-            .load(file))
-        _df_tmp.createOrReplaceTempView(out)
+# ═══════════════════════════════════════════════════════════════════════
+# PARAMÈTRES
+# ═══════════════════════════════════════════════════════════════════════
+arrete       = "2026_06_Prov"
+balancedate  = "2026-06-26"          # date de balance au format ISO (yyyy-MM-dd)
+INPUT_SCHEMA = "input"               # ex-LIBNAME input
+DATA_SCHEMA  = "data"                # ex-LIBNAME data
+
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {INPUT_SCHEMA}")
+
+# balancedate comme littéral date Spark, réutilisé dans les requêtes
+BAL = f"DATE'{balancedate}'"
 
 
-import_excel(file=import_03, out="Entity_Mappings", onglet="Entity_Mappings")
-_dfs[f'{pays}_CLMHDR_0'] = spark.sql(f"""SELECT  
+def data_correction(pays):
+    """Corrige et met en forme les claims d'un pays."""
 
-                Country,
-				CLA_CASE_NO as Clm_Nmbr,
-				POLICY_LINE_NO as Policy_Line_No,
-				POLICY_LINE_SEQ_NO as Policy_Line_Seq_No,
-				cover as Cvr_Typ,
-				SCHEME as Schm,
-				INCIDENT_DATE as Accdnt_Dt,
-				Year(INCIDENT_DATE) length = 3 as Acc_Yr,
-				month(INCIDENT_DATE) length = 3 as Acc_Mnth,
-				FIRST_OPEN_DATE as Rgstrtn_Dt,
-				Year(FIRST_OPEN_DATE) length = 3 as Rgstrtn_Yr,
-				month(FIRST_OPEN_DATE) length = 3 as Rgstrtn_Mnth,
-				FIRST_CLOSE_DATE, 
-				RECLOSE_DATE,
-				STATUS,
-				OUTSTANDING_LIFE_BALANCE ,
-				OUTSTANDING_NONLIFE_BALANCE,
-				POTENTIAL_CLM_AMT,
-				uw_company as Undrwrtng_Cmpny,
-				MAX_NO_OF_PAYMENTS as Max_Nmbr_Bnfts,
-				case when INSURANCE_TERM = 1 then 
-				cover_END_DATE + 20*365
-				else cover_END_DATE end format = ddmmyy10. length = 4 as Expry_dt,
-				cover_START_DATE as Incptn_Dt,
-				INSURANCE_TERM as Insrnc_Trm,
-				CLAIM_MONTHLY_BENEFIT,
-				POLICY_MONTHLY_BENEFIT,
-				IS_BULK,
-				PROD_ID as Prdct,
-				GENDER as Gndr,
-				BIRTH_DATE as Dt_of_Brth,
-				cause_code,
-				informer_type,
-				Legal_Entity
-				
-		FROM Data.{pays}_CLMHDR
-		
+    # ═══════════════════════════════════════════════════════════════════
+    # 1. CLMHDR_0 : sélection + normalisation des dates
+    # ═══════════════════════════════════════════════════════════════════
+    clmhdr_0 = spark.sql(f"""
+        SELECT
+            Country,
+            CLA_CASE_NO              AS Clm_Nmbr,
+            POLICY_LINE_NO           AS Policy_Line_No,
+            POLICY_LINE_SEQ_NO       AS Policy_Line_Seq_No,
+            cover                    AS Cvr_Typ,
+            SCHEME                   AS Schm,
+            INCIDENT_DATE            AS Accdnt_Dt,
+            year(INCIDENT_DATE)      AS Acc_Yr,
+            month(INCIDENT_DATE)     AS Acc_Mnth,
+            FIRST_OPEN_DATE          AS Rgstrtn_Dt,
+            year(FIRST_OPEN_DATE)    AS Rgstrtn_Yr,
+            month(FIRST_OPEN_DATE)   AS Rgstrtn_Mnth,
+            FIRST_CLOSE_DATE,
+            RECLOSE_DATE,
+            STATUS,
+            OUTSTANDING_LIFE_BALANCE,
+            OUTSTANDING_NONLIFE_BALANCE,
+            POTENTIAL_CLM_AMT,
+            uw_company               AS Undrwrtng_Cmpny,
+            MAX_NO_OF_PAYMENTS       AS Max_Nmbr_Bnfts,
+            CASE WHEN INSURANCE_TERM = 1
+                 THEN date_add(cover_END_DATE, 20*365)
+                 ELSE cover_END_DATE END       AS Expry_dt,
+            cover_START_DATE         AS Incptn_Dt,
+            INSURANCE_TERM           AS Insrnc_Trm,
+            CLAIM_MONTHLY_BENEFIT,
+            POLICY_MONTHLY_BENEFIT,
+            IS_BULK,
+            PROD_ID                  AS Prdct,
+            GENDER                   AS Gndr,
+            BIRTH_DATE               AS Dt_of_Brth,
+            cause_code,
+            informer_type,
+            Legal_Entity
+        FROM {DATA_SCHEMA}.{pays}_CLMHDR
+        WHERE STATUS NOT IN ('EC')
+          AND FIRST_OPEN_DATE <= {BAL}
+          AND FIRST_OPEN_DATE IS NOT NULL
+          AND INCIDENT_DATE   IS NOT NULL
+    """)
 
+    # Correction Insurance Term (< 1 ou null) pour les bulk → 1
+    clmhdr_0 = clmhdr_0.withColumn(
+        "Insrnc_Trm",
+        F.when(
+            ((F.col("Insrnc_Trm") < 1) | F.col("Insrnc_Trm").isNull())
+            & (F.col("IS_BULK") == "Y"),
+            F.lit(1)
+        ).otherwise(F.col("Insrnc_Trm")))
+    clmhdr_0.createOrReplaceTempView(f"{pays}_CLMHDR_0")
 
-		WHERE STATUS not in ('EC') AND  FIRST_OPEN_DATE <= input({balancedate},ddmmyy10.) AND FIRST_OPEN_DATE <> . and INCIDENT_DATE <> . """)
-_dfs[f'{pays}_CLMHDR_0'].createOrReplaceTempView(f'{pays}_CLMHDR_0')
+    # ═══════════════════════════════════════════════════════════════════
+    # 2. CLMTRNS_all : transactions avec année/mois comptable
+    # ═══════════════════════════════════════════════════════════════════
+    clmtrns = spark.sql(f"""
+        SELECT
+            t.country,
+            t.CLA_CASE_NO AS Clm_Nmbr,
+            t.TRANS_DATE  AS Trns_Dt,
+            CASE WHEN day(TRANS_DATE) > day({BAL})
+                 THEN CASE WHEN month(TRANS_DATE)=12 THEN year(TRANS_DATE)+1 ELSE year(TRANS_DATE) END
+                 ELSE year(TRANS_DATE) END           AS Acnt_Yr,
+            CASE WHEN day(TRANS_DATE) > day({BAL})
+                 THEN CASE WHEN month(TRANS_DATE)=12 THEN 1 ELSE month(TRANS_DATE)+1 END
+                 ELSE month(TRANS_DATE) END           AS Acnt_Mnth,
+            -t.GROSS_AMT AS Amt,
+            CASE WHEN t.ITEM_CLASS = 2 THEN 'C' ELSE m.TRANS_TYPE END AS Trns_Type
+        FROM {DATA_SCHEMA}.{pays}_CLMTRNS t
+        LEFT  JOIN {pays}_TRANS_TYPE_MAP m ON t.SPECIFICATION = m.SPECIFICATION
+        INNER JOIN {pays}_CLMHDR_0       h ON t.CLA_CASE_NO   = h.Clm_Nmbr
+        WHERE h.Clm_Nmbr IS NOT NULL
+          AND t.TRANS_DATE <= {BAL}
+        ORDER BY CLA_CASE_NO
+    """)
+    clmtrns.write.mode("overwrite").saveAsTable(f"{INPUT_SCHEMA}.{pays}_CLMTRNS_all")
+    clmtrns.createOrReplaceTempView(f"{pays}_CLMTRNS_all")
 
-# Correct Insurance Term where Null or <1.
+    # ═══════════════════════════════════════════════════════════════════
+    # 3. CLMHDR : benefit mensuel + date de clôture
+    # ═══════════════════════════════════════════════════════════════════
+    clmhdr = (spark.table(f"{pays}_CLMHDR_0")
+        .withColumn("Mnthly_Bnft",
+            F.when((F.col("CLAIM_MONTHLY_BENEFIT") != 0) & F.col("CLAIM_MONTHLY_BENEFIT").isNotNull(),
+                   F.col("CLAIM_MONTHLY_BENEFIT"))
+             .when((F.col("POLICY_MONTHLY_BENEFIT") != 0) & F.col("POLICY_MONTHLY_BENEFIT").isNotNull(),
+                   F.col("POLICY_MONTHLY_BENEFIT")))
+        .withColumn("Cls_Dt",
+            F.when(F.col("RECLOSE_DATE").isNotNull(), F.col("RECLOSE_DATE"))
+             .when(F.col("FIRST_CLOSE_DATE").isNotNull(), F.col("FIRST_CLOSE_DATE")))
+        .drop("CLAIM_MONTHLY_BENEFIT", "POLICY_MONTHLY_BENEFIT", "RECLOSE_DATE", "FIRST_CLOSE_DATE"))
+    clmhdr.createOrReplaceTempView(f"{pays}_CLMHDR_1")
 
-# KO : ligne 93
-# PROC SQL;
-		UPDATE &pays._CLMHDR_0 h
-		SET Insrnc_Trm = 1
-		WHERE Insrnc_Trm < 1 or Insrnc_Trm = .
-		and IS_BULK = "Y"
-		;
-QUIT;
-# fin KO
+    # ═══════════════════════════════════════════════════════════════════
+    # 4. Total payé par claim
+    # ═══════════════════════════════════════════════════════════════════
+    total_paid = spark.sql(f"""
+        SELECT Clm_Nmbr,
+               sum(Amt) AS Totl_Amnt_Pd,
+               sum(CASE WHEN Trns_Type = 'O' THEN 0 ELSE Amt END) AS Totl_Bnfts_Amnt_Pd
+        FROM {INPUT_SCHEMA}.{pays}_CLMTRNS_all
+        GROUP BY Clm_Nmbr
+    """)
+    total_paid.createOrReplaceTempView(f"{pays}_TOTAL_AMOUNT_PAID")
 
-# #####################################################  CREATION DE LA BASE CLMTRANS FINALE  #########################################################################################
-_dfs[f'{pays}_CLMTRNS_all'] = spark.sql(f"""SELECT t.country, t.CLA_CASE_NO as Clm_Nmbr,
-				t.TRANS_DATE as Trns_Dt,
-				case when day(TRANS_DATE)>Day(input({balancedate},ddmmyy10.)) then case when Month(TRANS_DATE)=12 
-				then Year(TRANS_DATE)+1 else Year(TRANS_DATE) end else Year(TRANS_DATE) end length = 3 as Acnt_Yr,
-				case when day(TRANS_DATE)>Day(input({balancedate},ddmmyy10.)) then case when Month(TRANS_DATE)=12 
-				then 1 else Month(TRANS_DATE)+1 end else Month(TRANS_DATE) end length = 3 as Acnt_Mnth,
-				-t.GROSS_AMT as Amt, 
-				case when t.ITEM_CLASS = 2 then 'C' else m.TRANS_TYPE end as Trns_Type
-		FROM DATA.{pays}_CLMTRNS t
-		lEFT JOIN {pays}_TRANS_TYPE_MAP m ON (t.SPECIFICATION = m.SPECIFICATION)
-		INNER JOIN {pays}_CLMHDR_0 h ON (t.CLA_CASE_NO = h.Clm_Nmbr)
-		WHERE h.Clm_Nmbr <> .
-		AND t.TRANS_DATE <= input({balancedate},ddmmyy10.)
-		ORDER BY CLA_CASE_NO""")
-_dfs[f'{pays}_CLMTRNS_all'].createOrReplaceTempView(f'{pays}_CLMTRNS_all')
+    # 5. CLMHDR_2 = CLMHDR_1 + total payé (jointure), null → 0
+    clmhdr_2 = (spark.table(f"{pays}_CLMHDR_1")
+        .join(total_paid, ["Clm_Nmbr"], "left")
+        .withColumn("Totl_Amnt_Pd", F.coalesce(F.col("Totl_Amnt_Pd"), F.lit(0)))
+        .withColumn("Totl_Bnfts_Amnt_Pd", F.coalesce(F.col("Totl_Bnfts_Amnt_Pd"), F.lit(0))))
+    clmhdr_2.createOrReplaceTempView(f"{pays}_CLMHDR_2")
 
-# ###########################################################    CREATION DE LA BASE CLMHDR    #########################################################################################
-_dfs[f'{pays}_CLMHDR_0'] = spark.table(f'{pays}_CLMHDR_0')
-_dfs[f'{pays}_CLMHDR_0'] = (_dfs[f'{pays}_CLMHDR_0']
-    .withColumn('Mnthly_Bnft',
-        F.when(F.expr("""CLAIM_MONTHLY_BENEFIT != 0 AND CLAIM_MONTHLY_BENEFIT IS NOT NULL"""), F.col('CLAIM_MONTHLY_BENEFIT'))
-         .when(F.expr("""POLICY_MONTHLY_BENEFIT != 0 AND POLICY_MONTHLY_BENEFIT IS NOT NULL"""), F.col('POLICY_MONTHLY_BENEFIT')))
-    .withColumn('Cls_Dt',
-        F.when(F.expr("""RECLOSE_DATE IS NOT NULL"""), F.col('RECLOSE_DATE'))
-         .when(F.expr("""FIRST_CLOSE_DATE IS NOT NULL"""), F.col('FIRST_CLOSE_DATE'))
-         .otherwise(F.col('NULL')))
-)
-# FORMAT/INFORMAT: FORMAT Cls_Dt ddmmyy10.
-_dfs[f'{pays}_CLMHDR_0'] = _dfs[f'{pays}_CLMHDR_0'].drop('CLAIM_MONTHLY_BENEFIT', 'POLICY_MONTHLY_BENEFIT', 'RECLOSE_DATE', 'FIRST_CLOSE_DATE')
-_dfs[f'{pays}_CLMHDR_0'].createOrReplaceTempView(f'{pays}_CLMHDR_0')
+    # 6. Premier / dernier benefit payé
+    firstlast = spark.sql(f"""
+        SELECT Clm_Nmbr,
+            CASE WHEN day(min(Trns_Dt)) > day({BAL})
+                 THEN CASE WHEN month(min(Trns_Dt))=12 THEN year(min(Trns_Dt))+1 ELSE year(min(Trns_Dt)) END
+                 ELSE year(min(Trns_Dt)) END AS Frst_Bnft_Pd_Yr,
+            CASE WHEN day(min(Trns_Dt)) > day({BAL})
+                 THEN CASE WHEN month(min(Trns_Dt))=12 THEN 1 ELSE month(min(Trns_Dt))+1 END
+                 ELSE month(min(Trns_Dt)) END AS Frst_Bnft_Pd_Mnth,
+            CASE WHEN day(max(Trns_Dt)) > day({BAL})
+                 THEN CASE WHEN month(max(Trns_Dt))=12 THEN year(max(Trns_Dt))+1 ELSE year(max(Trns_Dt)) END
+                 ELSE year(max(Trns_Dt)) END AS latst_Bnft_Pd_Yr,
+            CASE WHEN day(max(Trns_Dt)) > day({BAL})
+                 THEN CASE WHEN month(max(Trns_Dt))=12 THEN 1 ELSE month(max(Trns_Dt))+1 END
+                 ELSE month(max(Trns_Dt)) END AS latst_Bnft_Pd_Mnth
+        FROM {INPUT_SCHEMA}.{pays}_CLMTRNS_all
+        WHERE Amt > 1 AND Trns_Type <> 'O'
+        GROUP BY Clm_Nmbr
+    """)
+    firstlast.createOrReplaceTempView(f"{pays}_FIRSTLASTBENEFIT")
 
-_dfs[f'{pays}_CLMHDR_1'] = spark.table(f'{pays}_CLMHDR_0').orderBy('Clm_Nmbr')
-_dfs[f'{pays}_CLMHDR_1'].createOrReplaceTempView(f'{pays}_CLMHDR_1')
+    # 7. CLMHDR_3 = CLMHDR_2 + firstlast, null → 0, Prdct dérivé du Schm
+    clmhdr_3 = (spark.table(f"{pays}_CLMHDR_2")
+        .join(firstlast, ["Clm_Nmbr"], "left")
+        .withColumn("Frst_Bnft_Pd_Yr", F.coalesce(F.col("Frst_Bnft_Pd_Yr"), F.lit(0)))
+        .withColumn("Frst_Bnft_Pd_Mnth", F.coalesce(F.col("Frst_Bnft_Pd_Mnth"), F.lit(0)))
+        .withColumn("latst_Bnft_Pd_Yr", F.coalesce(F.col("latst_Bnft_Pd_Yr"), F.lit(0)))
+        .withColumn("latst_Bnft_Pd_Mnth", F.coalesce(F.col("latst_Bnft_Pd_Mnth"), F.lit(0)))
+        .withColumn("OUTSTANDING_LIFE_BALANCE", F.coalesce(F.col("OUTSTANDING_LIFE_BALANCE"), F.lit(0)))
+        .withColumn("OUTSTANDING_NONLIFE_BALANCE", F.coalesce(F.col("OUTSTANDING_NONLIFE_BALANCE"), F.lit(0)))
+        .withColumn("POTENTIAL_CLM_AMT", F.coalesce(F.col("POTENTIAL_CLM_AMT"), F.lit(0)))
+        .withColumn("Mnthly_Bnft", F.coalesce(F.col("Mnthly_Bnft"), F.lit(0)))
+        .withColumn("Prdct",
+            F.when((F.col("Prdct") == "") & (F.length("Schm") == 4), F.expr("substring(Schm,1,2)"))
+             .when((F.col("Prdct") == "") & (F.length("Schm") > 3), F.expr("substring(Schm,1,3)"))
+             .otherwise(F.col("Prdct"))))
+    clmhdr_3.createOrReplaceTempView(f"{pays}_CLMHDR_3")
 
-_dfs[f'{pays}_TOTAL_AMOUNT_PAID'] = spark.sql(f"""SELECT Clm_Nmbr, sum(Amt) as Totl_Amnt_Pd, sum(case when Trns_Type = 'O' then 0 
-		else Amt end) as Totl_Bnfts_Amnt_Pd
-		FROM INPUT.{pays}_CLMTRNS_all
-		GROUP BY Clm_Nmbr""")
-_dfs[f'{pays}_TOTAL_AMOUNT_PAID'].createOrReplaceTempView(f'{pays}_TOTAL_AMOUNT_PAID')
+    # ═══════════════════════════════════════════════════════════════════
+    # 8. Ajout du Reserve Group (règle différente pour FR)
+    # ═══════════════════════════════════════════════════════════════════
+    if pays == "FR":
+        # FR : jointure sur SCHEME_DATABASE puis sous-produit puis reserve group
+        clmhdr_all = spark.sql(f"""
+            SELECT h.*, s.SUB_PRODUCT,
+                   s.PAYMENT_BENEFIT AS Clm_Pymnt_Basis, s.PRODUCT_TYPE
+            FROM {pays}_CLMHDR_3 h
+            LEFT JOIN {pays}_SCHEME_DATABASE s
+              ON h.Schm = s.Schm AND h.Cvr_Typ = s.COVER_TYPE
+        """)
+        clmhdr_all = clmhdr_all.withColumn("Sub_Prdct",
+            F.when(~F.col("SUB_PRODUCT").isin("MORTGAGE"), F.lit("NMORTGAGE"))
+             .when(F.col("SUB_PRODUCT").isin("MORTGAGE"), F.lit("MORTGAGE")))
+        clmhdr_all.createOrReplaceTempView(f"{pays}_CLMHDR_all_0")
 
-_dfs[f'{pays}_TOTAL_AMOUNT_PAID'] = spark.table(f'{pays}_TOTAL_AMOUNT_PAID').orderBy('Clm_Nmbr')
-_dfs[f'{pays}_TOTAL_AMOUNT_PAID'].createOrReplaceTempView(f'{pays}_TOTAL_AMOUNT_PAID')
+        clmhdr_all = spark.sql(f"""
+            SELECT h.*, s.Rsrv_Grp
+            FROM {pays}_CLMHDR_all_0 h
+            LEFT JOIN {pays}_RESERVE_GROUP_SPEC s
+              ON h.Cvr_Typ = s.Cvr_Typ AND h.Sub_Prdct = s.Sub_Prdct
+                 AND h.Clm_Pymnt_Basis = s.Clm_Pymnt_Basis
+        """)
+        clmhdr_all = clmhdr_all.withColumn("Rsrv_Grp",
+            F.when((F.col("Rsrv_Grp") == "") & F.col("Cvr_Typ").isin("DA","DB","DS","DC"), F.lit("GD1"))
+             .when((F.col("Rsrv_Grp") == "") & F.col("Cvr_Typ").isin("DI","DJ"), F.lit("GD3"))
+             .when((F.col("Rsrv_Grp") == "") & F.col("Cvr_Typ").isin("RR","RU"), F.lit("GR1"))
+             .when((F.col("Rsrv_Grp") == "") & F.col("Cvr_Typ").isin("GP"), F.lit("GP1"))
+             .when((F.col("Rsrv_Grp") == "") & F.col("Cvr_Typ").isin("LA","LL","LR","DY","DZ"), F.lit("GL1"))
+             .when(F.col("Rsrv_Grp") == "", F.lit("ZZ1"))
+             .otherwise(F.col("Rsrv_Grp")))
+    else:
+        # Autres pays : jointure directe sur RESERVE_GROUP_SPEC (Cvr_Typ)
+        clmhdr_all = spark.sql(f"""
+            SELECT h.*, s.Rsrv_Grp
+            FROM {pays}_CLMHDR_3 h
+            LEFT JOIN {pays}_RESERVE_GROUP_SPEC s ON h.Cvr_Typ = s.Cvr_Typ
+            ORDER BY Clm_Nmbr
+        """)
+        clmhdr_all = clmhdr_all.withColumn("Rsrv_Grp",
+            F.when(F.col("Rsrv_Grp") == "", F.lit("ZZ1")).otherwise(F.col("Rsrv_Grp")))
 
-_dfs[f'{pays}_CLMHDR_1'] = spark.table(f'{pays}_CLMHDR_1').orderBy('Clm_Nmbr')
-_dfs[f'{pays}_CLMHDR_1'].createOrReplaceTempView(f'{pays}_CLMHDR_1')
+    clmhdr_all.createOrReplaceTempView(f"{pays}_CLMHDR_all")
 
-_dfs[f'{pays}_CLMHDR_2'] = spark.createDataFrame([], schema=StructType([]))
-_dfs[f'{pays}_CLMHDR_2'] = (_dfs[f'{pays}_CLMHDR_2']
-    .withColumn('Totl_Amnt_Pd', F.when(F.expr("""Totl_Amnt_Pd IS NULL"""), F.lit(0)))
-    .withColumn('Totl_Bnfts_Amnt_Pd', F.when(F.expr("""Totl_Bnfts_Amnt_Pd IS NULL"""), F.lit(0)))
-)
-_dfs[f'{pays}_CLMHDR_2'].createOrReplaceTempView(f'{pays}_CLMHDR_2')
+    # ═══════════════════════════════════════════════════════════════════
+    # 9. FILTRES : mettre en ZZ2 les schemes hors on-system (par pays)
+    # ═══════════════════════════════════════════════════════════════════
+    def to_zz2(df, cond):
+        return df.withColumn("Rsrv_Grp",
+            F.when(F.expr(cond), F.lit("ZZ2")).otherwise(F.col("Rsrv_Grp")))
 
-_dfs[f'{pays}_FIRSTLASTBENEFIT'] = spark.sql(f"""SELECT Clm_Nmbr,
+    df = spark.table(f"{pays}_CLMHDR_all")
 
-				case when day(min(Trns_Dt))>Day(input({balancedate},ddmmyy10.)) then case 
-				when Month(min(Trns_Dt))=12 then Year(min(Trns_Dt))+1 else Year(min(Trns_Dt)) end 
-				else Year(min(Trns_Dt)) end as Frst_Bnft_Pd_Yr,
+    if pays == "ES":
+        df = to_zz2(df, "Schm LIKE 'H1%' OR Schm LIKE 'H2%' OR Schm LIKE 'H3%' OR Schm LIKE 'H4%' "
+                        "OR Schm LIKE 'H5%' OR Schm LIKE 'H6%' OR Schm LIKE 'HPA%' "
+                        "OR Schm LIKE 'S1%' OR Schm LIKE 'S2%' OR Schm LIKE 'S3%' OR Schm LIKE 'S4%' "
+                        "OR Schm LIKE 'S5%' OR Schm LIKE 'S6%' OR Schm LIKE 'S7%'")
+    if pays == "IT":
+        df = to_zz2(df, "Schm LIKE 'LN1%'")
+    if pays == "NO":
+        df = to_zz2(df, "Schm IN ('TA.1','TB.1','TC.1','TD.1','TE.1','TF.1','TG.1','TH.1','TI.1','TJ.1')")
+        df = to_zz2(df, "Schm LIKE 'ED.%' OR Schm LIKE 'EE.%' OR Schm LIKE 'EG.%' OR Schm LIKE 'EH.%' "
+                        "OR Schm LIKE 'EI.%' OR Schm LIKE 'EJ.%' OR Schm LIKE 'EK.%' OR Schm LIKE 'EL.%' OR Schm LIKE 'EM.%'")
+    if pays in ("DE", "TR"):
+        df = to_zz2(df, "Undrwrtng_Cmpny IN ('501','502')")
+    if pays == "DK":
+        df = to_zz2(df, "Schm LIKE '5B%' OR Schm LIKE '5C%' OR Schm LIKE '1F%' OR Schm LIKE '1G%'")
+        df = to_zz2(df, "Schm LIKE 'Q%'")
+    if pays == "FI":
+        df = to_zz2(df, "Schm LIKE 'SN%'")
+    if pays == "SE":
+        df = to_zz2(df, "Schm LIKE 'ED.%' OR Schm LIKE 'EE.%' OR Schm LIKE 'EF.%' OR Schm LIKE 'EG.%' "
+                        "OR Schm LIKE 'EH.%' OR Schm LIKE 'EI.%' OR Schm LIKE 'EJ.%'")
+        df = to_zz2(df, "Schm LIKE 'ZA.%'")
+    else:
+        # ATTENTION : dans le SAS, le 8A.% est un %ELSE — il s'applique à TOUS
+        # les pays SAUF SE (pas seulement quelques-uns).
+        df = to_zz2(df, "Schm LIKE '8A.%'")
+    if pays == "UK":
+        df = to_zz2(df, "Schm LIKE 'CFA%' OR Schm LIKE 'CFN%'")
+    if pays == "GR":
+        df = to_zz2(df, "Schm IN ('BPI.1','BPJ.1','BPK.1','BPL.1','BPM.1','EM1.1','EM2.1','GM1.1')")
+    if pays == "DE":
+        df = to_zz2(df, "Schm IN ('P4.2','P4.3')")
+    if pays == "IE":
+        df = to_zz2(df, "Schm IN ('EV.3','EV.4')")
 
-				case when day(min(Trns_Dt))>Day(input({balancedate},ddmmyy10.)) then case 
-				when Month(min(Trns_Dt))=12 then 1 else Month(min(Trns_Dt))+1 end 
-				else Month(min(Trns_Dt)) end as Frst_Bnft_Pd_Mnth,
+    # Suisse Cembra : max 9 paiements pour certains schemes récents (ex-IF/THEN manuel)
+    if pays == "CH":
+        df = df.withColumn("Max_Nmbr_Bnfts",
+            F.when(
+                F.col("Schm").isin("GO.1","GN.1","G9.1","G9.2","G9.3","G9.4",
+                                   "G3.1","G3.2","G3.3","G3.4","G6.1","G6.2","G6.3","GL.1","GM.1")
+                & (F.year("Rgstrtn_Dt") > 2014)
+                & (F.col("Max_Nmbr_Bnfts") == 12),
+                F.lit(9)
+            ).otherwise(F.col("Max_Nmbr_Bnfts")))
 
-				case when day(max(Trns_Dt))>Day(input({balancedate},ddmmyy10.)) then case 
-				when Month(max(Trns_Dt))=12 then Year(max(Trns_Dt))+1 else Year(max(Trns_Dt))end 
-				else Year(max(Trns_Dt)) end as latst_Bnft_Pd_Yr,
+    # France : corrections spécifiques
+    if pays == "FR":
+        df = df.withColumn("Undrwrtng_Cmpny",
+            F.when(F.expr("Schm LIKE '1%' AND Cvr_Typ LIKE 'D%'"), F.lit("102"))
+             .otherwise(F.col("Undrwrtng_Cmpny")))
+        df = df.withColumn("Schm",
+            F.when(F.col("Clm_Nmbr") == 1050126, F.lit("EFD.1")).otherwise(F.col("Schm")))
 
-				case when day(max(Trns_Dt))>Day(input({balancedate},ddmmyy10.)) then case 
-				when Month(max(Trns_Dt))=12 then 1 else Month(max(Trns_Dt))+1 end 
-				else Month(max(Trns_Dt)) end as latst_Bnft_Pd_Mnth
+    df.createOrReplaceTempView(f"{pays}_CLMHDR_all")
 
-		FROM INPUT.{pays}_CLMTRNS_all
-		WHERE Amt>1 AND Trns_Type <> 'O'
-		GROUP BY Clm_Nmbr
-		""")
-_dfs[f'{pays}_FIRSTLASTBENEFIT'].createOrReplaceTempView(f'{pays}_FIRSTLASTBENEFIT')
+    # ═══════════════════════════════════════════════════════════════════
+    # 10. Correction du monthly benefit (moyenne par produit/groupe)
+    # ═══════════════════════════════════════════════════════════════════
+    # Moyenne par produit
+    avg_prdct = spark.sql(f"""
+        SELECT h.Rsrv_Grp, h.Prdct, count(h.Clm_Nmbr) AS COUNT, mean(h.Mnthly_Bnft) AS Avg_Mnthly_Bnft
+        FROM {pays}_CLMHDR_all h
+        INNER JOIN {pays}_MNTHLY_BNFT_LIMITS m ON h.Rsrv_Grp = m.Rsrv_Grp
+        WHERE h.Mnthly_Bnft > m.LOWER AND h.Mnthly_Bnft < m.UPPER
+        GROUP BY h.Rsrv_Grp, h.Prdct
+    """)
+    avg_prdct.createOrReplaceTempView("MNTHLY_BNFT_AVRG_PRDCT")
+    # Moyenne par groupe
+    avg_grp = spark.sql(f"""
+        SELECT h.Rsrv_Grp, count(h.Clm_Nmbr) AS COUNT, mean(h.Mnthly_Bnft) AS Avg_Mnthly_Bnft
+        FROM {pays}_CLMHDR_all h
+        INNER JOIN {pays}_MNTHLY_BNFT_LIMITS m ON h.Rsrv_Grp = m.Rsrv_Grp
+        WHERE h.Mnthly_Bnft > m.LOWER AND h.Mnthly_Bnft < m.UPPER
+        GROUP BY h.Rsrv_Grp
+    """)
+    avg_grp.createOrReplaceTempView("MNTHLY_BNFT_AVRG_GRP")
+    # Claims à corriger + valeur corrigée
+    corr = spark.sql(f"""
+        SELECT DISTINCT c.Clm_Nmbr,
+               CASE WHEN p.COUNT > 9 THEN p.Avg_Mnthly_Bnft ELSE g.Avg_Mnthly_Bnft END AS Mnthly_Bnft
+        FROM (
+            SELECT h.Clm_Nmbr, h.Rsrv_Grp, h.Prdct, h.Mnthly_Bnft
+            FROM {pays}_CLMHDR_all h
+            INNER JOIN {pays}_MNTHLY_BNFT_LIMITS m ON h.Rsrv_Grp = m.Rsrv_Grp
+            WHERE (h.Mnthly_Bnft < m.LOWER OR h.Mnthly_Bnft > m.UPPER OR h.Mnthly_Bnft IS NULL)
+              AND h.STATUS IN ('OP','RO')
+        ) c
+        LEFT JOIN MNTHLY_BNFT_AVRG_PRDCT p ON c.Prdct = p.Prdct AND c.Rsrv_Grp = p.Rsrv_Grp
+        LEFT JOIN MNTHLY_BNFT_AVRG_GRP   g ON c.Rsrv_Grp = g.Rsrv_Grp
+    """)
+    corr.createOrReplaceTempView("MNTHLY_BNFT_CORR")
+    # Appliquer : remplacer Mnthly_Bnft par la valeur corrigée quand elle existe
+    df = (spark.table(f"{pays}_CLMHDR_all").alias("h")
+          .join(corr.select("Clm_Nmbr", F.col("Mnthly_Bnft").alias("Mnthly_Bnft_new")).alias("c"),
+                ["Clm_Nmbr"], "left")
+          .withColumn("Mnthly_Bnft",
+              F.when(F.col("Mnthly_Bnft_new").isNotNull(), F.col("Mnthly_Bnft_new"))
+               .otherwise(F.col("Mnthly_Bnft")))
+          .drop("Mnthly_Bnft_new"))
+    df.createOrReplaceTempView(f"{pays}_CLMHDR_all")
 
-_dfs[f'{pays}_FIRSTLASTBENEFIT'] = spark.table(f'{pays}_FIRSTLASTBENEFIT').orderBy('Clm_Nmbr')
-_dfs[f'{pays}_FIRSTLASTBENEFIT'].createOrReplaceTempView(f'{pays}_FIRSTLASTBENEFIT')
+    # ═══════════════════════════════════════════════════════════════════
+    # 11. Correction outstanding balance
+    # ═══════════════════════════════════════════════════════════════════
+    # Si OUTSTANDING_LIFE_BALANCE est null ou 0 → prendre le non-life
+    df = spark.table(f"{pays}_CLMHDR_all").withColumn(
+        "OUTSTANDING_LIFE_BALANCE",
+        F.when(F.col("OUTSTANDING_LIFE_BALANCE").isNull() | (F.col("OUTSTANDING_LIFE_BALANCE") == 0),
+               F.col("OUTSTANDING_NONLIFE_BALANCE"))
+         .otherwise(F.col("OUTSTANDING_LIFE_BALANCE")))
+    df.createOrReplaceTempView(f"{pays}_CLMHDR_all")
 
-_dfs[f'{pays}_CLMHDR_2'] = spark.table(f'{pays}_CLMHDR_2').orderBy('Clm_Nmbr')
-_dfs[f'{pays}_CLMHDR_2'].createOrReplaceTempView(f'{pays}_CLMHDR_2')
+    # Montants des transactions (item class 2,3,4) par claim
+    claims_trns = spark.sql(f"""
+        SELECT DISTINCT t.CLA_CASE_NO AS Clm_Nmbr, sum(-GROSS_AMT) AS AMT
+        FROM {DATA_SCHEMA}.{pays}_CLMTRNS t
+        INNER JOIN {DATA_SCHEMA}.{pays}_CLMHDR h ON h.CLA_CASE_NO = t.CLA_CASE_NO
+        WHERE ITEM_CLASS IN (2,3,4)
+        GROUP BY t.CLA_CASE_NO
+    """)
+    claims_trns.createOrReplaceTempView("CLAIMS_IN_CLMTRNS")
 
-# RETAIN variables (initial values): {'Country': '0', 'Clm_Nmbr': '0', 'Policy_Line_No': '0', 'Policy_Line_Seq_No': '0', 'Cvr_Typ': '0', 'Schm': '0', 'Accdnt_Dt': '0', 'Acc_Yr': '0', 'Acc_Mnth': '0', 'Rgstrtn_Dt': '0', 'Rgstrtn_Yr': '0', 'Rgstrtn_Mnth': '0', 'Cls_Dt': '0', 'STATUS': '0', 'OUTSTANDING_LIFE_BALANCE': '0', 'POTENTIAL_CLM_AMT': '0', 'Totl_Amnt_Rpybl': '0', 'Undrwrtng_Cmpny': '0', 'Max_Nmbr_Bnfts': '0', 'Expry_dt': '0', 'Totl_Amnt_Pd': '0', 'Totl_Bnfts_Amnt_Pd': '0', 'Frst_Bnft_Pd_Yr': '0', 'Frst_Bnft_Pd_Mnth': '0', 'Latst_Bnft_Pd_Yr': '0', 'Latst_Bnft_Pd_Mnth': '0', 'Incptn_Dt': '0', 'Insrnc_Trm': '0', 'Mnthly_Bnft': '0', 'Prdct': '0', 'Gndr': '0', 'Dt_of_Brth': '0', 'OUTSTANDING_NONLIFE_BALANCE': '0', 'cause_code': '0', 'informer_type': '0', 'Legal_Entity': '0'}
-_dfs[f'{pays}_CLMHDR_3'] = spark.createDataFrame([], schema=StructType([]))
-_dfs[f'{pays}_CLMHDR_3'] = (_dfs[f'{pays}_CLMHDR_3']
-    .withColumn('Frst_Bnft_Pd_Yr', F.when(F.expr("""Frst_Bnft_Pd_Yr IS NULL"""), F.lit(0)))
-    .withColumn('Frst_Bnft_Pd_Mnth', F.when(F.expr("""Frst_Bnft_Pd_Mnth IS NULL"""), F.lit(0)))
-    .withColumn('latst_Bnft_Pd_Yr', F.when(F.expr("""latst_Bnft_Pd_Yr IS NULL"""), F.lit(0)))
-    .withColumn('latst_Bnft_Pd_Mnth', F.when(F.expr("""latst_Bnft_Pd_Mnth IS NULL"""), F.lit(0)))
-    .withColumn('OUTSTANDING_LIFE_BALANCE', F.when(F.expr("""OUTSTANDING_LIFE_BALANCE IS NULL"""), F.lit(0)))
-    .withColumn('OUTSTANDING_NONLIFE_BALANCE', F.when(F.expr("""OUTSTANDING_NONLIFE_BALANCE IS NULL"""), F.lit(0)))
-    .withColumn('POTENTIAL_CLM_AMT', F.when(F.expr("""POTENTIAL_CLM_AMT IS NULL"""), F.lit(0)))
-    .withColumn('Mnthly_Bnft', F.when(F.expr("""Mnthly_Bnft IS NULL"""), F.lit(0)))
-    .withColumn('Prdct', F.when(F.expr("""Prdct='' AND length(Schm) = 4"""), F.expr("""substring(Schm,1,2)""")))
-    .withColumn('Prdct', F.when(F.expr("""Prdct='' AND length(Schm) > 3"""), F.expr("""substring(Schm,1,3)""")))
-)
-_dfs[f'{pays}_CLMHDR_3'] = _dfs[f'{pays}_CLMHDR_3'].select('Country', 'Clm_Nmbr', 'Policy_Line_No', 'Policy_Line_Seq_No', 'Cvr_Typ', 'Schm', 'Accdnt_Dt', 'Acc_Yr', 'Acc_Mnth', 'Rgstrtn_Dt', 'Rgstrtn_Yr', 'Rgstrtn_Mnth', 'Cls_Dt', 'STATUS', 'OUTSTANDING_LIFE_BALANCE', 'Totl_Amnt_Rpybl', 'Undrwrtng_Cmpny', 'Max_Nmbr_Bnfts', 'Expry_dt', 'Totl_Amnt_Pd', 'Totl_Bnfts_Amnt_Pd', 'Frst_Bnft_Pd_Yr', 'Frst_Bnft_Pd_Mnth', 'Latst_Bnft_Pd_Yr', 'Latst_Bnft_Pd_Mnth', 'Incptn_Dt', 'Insrnc_Trm', 'Mnthly_Bnft', 'Prdct', 'Gndr', 'Dt_of_Brth', 'POTENTIAL_CLM_AMT', 'OUTSTANDING_NONLIFE_BALANCE', 'cause_code', 'informer_type', 'Legal_Entity')
-_dfs[f'{pays}_CLMHDR_3'].createOrReplaceTempView(f'{pays}_CLMHDR_3')
+    # Moyennes par produit / groupe
+    blnc_avg_prdct = spark.sql(f"""
+        SELECT h.Rsrv_Grp, h.Prdct, count(h.Clm_Nmbr) AS COUNT, mean(t.AMT) AS AVG_AMT
+        FROM CLAIMS_IN_CLMTRNS t
+        INNER JOIN {pays}_CLMHDR_all h ON t.Clm_Nmbr = h.Clm_Nmbr
+        INNER JOIN {pays}_OTSTANDING_BLNC_LIMITS m ON h.Rsrv_Grp = m.Rsrv_Grp
+        WHERE t.AMT > m.LOWER AND t.AMT < m.UPPER AND t.AMT IS NOT NULL
+        GROUP BY h.Rsrv_Grp, h.Prdct
+    """)
+    blnc_avg_prdct.createOrReplaceTempView("OTSTANDING_BLNC_AVRG_PRDCT")
+    blnc_avg_grp = spark.sql(f"""
+        SELECT h.Rsrv_Grp, count(h.Clm_Nmbr) AS COUNT, mean(t.AMT) AS AVG_AMT
+        FROM CLAIMS_IN_CLMTRNS t
+        INNER JOIN {pays}_CLMHDR_all h ON t.Clm_Nmbr = h.Clm_Nmbr
+        INNER JOIN {pays}_OTSTANDING_BLNC_LIMITS m ON h.Rsrv_Grp = m.Rsrv_Grp
+        WHERE t.AMT > m.LOWER AND t.AMT < m.UPPER AND t.AMT IS NOT NULL
+        GROUP BY h.Rsrv_Grp
+    """)
+    blnc_avg_grp.createOrReplaceTempView("OTSTANDING_BLNC_AVRG_GRP")
+    # Claims à corriger + valeur corrigée
+    blnc_corr = spark.sql(f"""
+        SELECT DISTINCT c.Clm_Nmbr,
+               CASE WHEN p.COUNT > 9 THEN p.AVG_AMT ELSE g.AVG_AMT END AS OUTSTANDING_LIFE_BALANCE
+        FROM (
+            SELECT h.Clm_Nmbr, h.Rsrv_Grp, h.Prdct
+            FROM {pays}_CLMHDR_all h
+            INNER JOIN {pays}_OTSTANDING_BLNC_LIMITS m ON h.Rsrv_Grp = m.Rsrv_Grp
+            WHERE h.STATUS IN ('OP','RO')
+              AND (h.OUTSTANDING_LIFE_BALANCE < m.LOWER
+                   OR h.OUTSTANDING_LIFE_BALANCE > m.UPPER
+                   OR h.OUTSTANDING_LIFE_BALANCE IS NULL)
+        ) c
+        LEFT JOIN OTSTANDING_BLNC_AVRG_PRDCT p ON c.Prdct = p.Prdct AND c.Rsrv_Grp = p.Rsrv_Grp
+        LEFT JOIN OTSTANDING_BLNC_AVRG_GRP   g ON c.Rsrv_Grp = g.Rsrv_Grp
+    """)
+    blnc_corr.createOrReplaceTempView("OTSTNDNG_BLNC_CORR")
+    # Appliquer
+    df = (spark.table(f"{pays}_CLMHDR_all")
+          .join(blnc_corr.select("Clm_Nmbr",
+                    F.col("OUTSTANDING_LIFE_BALANCE").alias("OLB_new")), ["Clm_Nmbr"], "left")
+          .withColumn("OUTSTANDING_LIFE_BALANCE",
+              F.when(F.col("OLB_new").isNotNull(), F.col("OLB_new"))
+               .otherwise(F.col("OUTSTANDING_LIFE_BALANCE")))
+          .drop("OLB_new")
+          .withColumn("OUTSTANDING_LIFE_BALANCE", F.coalesce(F.col("OUTSTANDING_LIFE_BALANCE"), F.lit(0)))
+          .drop("OUTSTANDING_NONLIFE_BALANCE")
+          .withColumnRenamed("OUTSTANDING_LIFE_BALANCE", "Otstndng_Balnc"))
+    df.write.mode("overwrite").saveAsTable(f"{INPUT_SCHEMA}.{pays}_CLMHDR_ALL")
+    df.createOrReplaceTempView(f"{pays}_CLMHDR_all")
 
-if {pays}=DE or {pays}=IT or {pays}=FI or {pays}=PT or {pays}=NO or {pays}=DK or {pays}=ES or {pays}=SE or {pays}=TR or {pays}=NL or {pays}=NI or {pays}=IE or {pays}=GR or {pays}=PL  or {pays}=CH or {pays}=UK:
-    PROC SQL;
-	CREATE TABLE &pays._CLMHDR_all as 
-	SELECT
-			h.*,
-			Rsrv_Grp
-	FROM &pays._CLMHDR_3 h
-	LEFT JOIN &pays._RESERVE_GROUP_SPEC s ON (h.Cvr_Typ = s.Cvr_Typ )
-	
-	ORDER BY Clm_Nmbr;
-QUIT;
-
-data &pays._CLMHDR_all;
-retain Country Rsrv_Grp Clm_Nmbr Policy_Line_No Policy_Line_Seq_No Cvr_Typ Schm Accdnt_Dt Acc_Yr Acc_Mnth Rgstrtn_Dt Rgstrtn_Yr Rgstrtn_Mnth Cls_Dt STATUS OUTSTANDING_LIFE_BALANCE  POTENTIAL_CLM_AMT Totl_Amnt_Rpybl Undrwrtng_Cmpny Max_Nmbr_Bnfts Expry_dt Totl_Amnt_Pd Totl_Bnfts_Amnt_Pd Frst_Bnft_Pd_Yr Frst_Bnft_Pd_Mnth Latst_Bnft_Pd_Yr Latst_Bnft_Pd_Mnth Incptn_Dt Insrnc_Trm Mnthly_Bnft Prdct Gndr Dt_of_Brth OUTSTANDING_NONLIFE_BALANCE cause_code informer_type Legal_Entity ;
-keep   Country Rsrv_Grp Clm_Nmbr Policy_Line_No Policy_Line_Seq_No Cvr_Typ Schm Accdnt_Dt Acc_Yr Acc_Mnth Rgstrtn_Dt Rgstrtn_Yr Rgstrtn_Mnth Cls_Dt STATUS OUTSTANDING_LIFE_BALANCE  Totl_Amnt_Rpybl Undrwrtng_Cmpny Max_Nmbr_Bnfts Expry_dt Totl_Amnt_Pd Totl_Bnfts_Amnt_Pd Frst_Bnft_Pd_Yr Frst_Bnft_Pd_Mnth Latst_Bnft_Pd_Yr Latst_Bnft_Pd_Mnth Incptn_Dt Insrnc_Trm Mnthly_Bnft Prdct Gndr Dt_of_Brth POTENTIAL_CLM_AMT  OUTSTANDING_NONLIFE_BALANCE cause_code informer_type Legal_Entity ;
-
-	set &pays._CLMHDR_all;
-	if Rsrv_Grp = "" then Rsrv_Grp = "ZZ1";
-	else Rsrv_Grp = Rsrv_Grp;
-run;
-if {pays}=FR:
-    PROC SQL;
-	CREATE TABLE &pays._CLMHDR_all as 
-	SELECT
-			h.*,
-			s.SUB_PRODUCT ,
-			s.PAYMENT_BENEFIT as Clm_Pymnt_Basis,
-			s.PRODUCT_TYPE
-	FROM &pays._CLMHDR_3 h
-	LEFT JOIN &pays._SCHEME_DATABASE s ON (h.Schm=s.Schm and  h.Cvr_Typ = s.COVER_TYPE )
-	;
-QUIT;
-
-data &pays._CLMHDR_all_0 ;
-set &pays._CLMHDR_all ;
-if SUB_PRODUCT not in ("MORTGAGE") then Sub_Prdct ="NMORTGAGE" ;
-if SUB_PRODUCT     in ("MORTGAGE") then Sub_Prdct ="MORTGAGE" ;
-run;
-
-
-PROC SQL;
-	CREATE TABLE &pays._CLMHDR_all_1 as 
-	SELECT
-			h.*,
-			Rsrv_Grp
-	FROM &pays._CLMHDR_all_0 h
-	LEFT JOIN &pays._RESERVE_GROUP_SPEC s ON (h.Cvr_Typ = s.Cvr_Typ and h.Sub_Prdct=s.Sub_Prdct and h.Clm_Pymnt_Basis=s.Clm_Pymnt_Basis )
-	
-	ORDER BY Clm_Nmbr;
-QUIT;
-
-data &pays._CLMHDR_all;
-retain Country Rsrv_Grp Clm_Nmbr Policy_Line_No Policy_Line_Seq_No Cvr_Typ Schm Accdnt_Dt Acc_Yr Acc_Mnth Rgstrtn_Dt Rgstrtn_Yr Rgstrtn_Mnth Cls_Dt STATUS OUTSTANDING_LIFE_BALANCE  POTENTIAL_CLM_AMT Totl_Amnt_Rpybl Undrwrtng_Cmpny Max_Nmbr_Bnfts Expry_dt Totl_Amnt_Pd Totl_Bnfts_Amnt_Pd Frst_Bnft_Pd_Yr Frst_Bnft_Pd_Mnth Latst_Bnft_Pd_Yr Latst_Bnft_Pd_Mnth Incptn_Dt Insrnc_Trm Mnthly_Bnft Prdct Gndr Dt_of_Brth  OUTSTANDING_NONLIFE_BALANCE cause_code informer_type Legal_Entity ;
-keep   Country Rsrv_Grp Clm_Nmbr Policy_Line_No Policy_Line_Seq_No Cvr_Typ Schm Accdnt_Dt Acc_Yr Acc_Mnth Rgstrtn_Dt Rgstrtn_Yr Rgstrtn_Mnth Cls_Dt STATUS OUTSTANDING_LIFE_BALANCE  Totl_Amnt_Rpybl Undrwrtng_Cmpny Max_Nmbr_Bnfts Expry_dt Totl_Amnt_Pd Totl_Bnfts_Amnt_Pd Frst_Bnft_Pd_Yr Frst_Bnft_Pd_Mnth Latst_Bnft_Pd_Yr Latst_Bnft_Pd_Mnth Incptn_Dt Insrnc_Trm Mnthly_Bnft Prdct Gndr Dt_of_Brth POTENTIAL_CLM_AMT  OUTSTANDING_NONLIFE_BALANCE cause_code informer_type Legal_Entity ;
-
-	set &pays._CLMHDR_all_1;
-	
-	if Rsrv_Grp = "" and Cvr_Typ in ('DA','DB','DS','DC') then Rsrv_Grp = "GD1";
-    if Rsrv_Grp = "" and Cvr_Typ in ('DI','DJ') then Rsrv_Grp = "GD3";
-    if Rsrv_Grp = "" and Cvr_Typ in ('RR','RU') then Rsrv_Grp = "GR1";
-    if Rsrv_Grp = "" and Cvr_Typ in ('GP') then Rsrv_Grp = "GP1";
-    if Rsrv_Grp = "" and Cvr_Typ in ('LA','LL','LR','DY','DZ') then Rsrv_Grp = "GL1";
-	if Rsrv_Grp = ""  then Rsrv_Grp = "ZZ1"; 
-run;
-# #####################################################  FILTRE DES SCHEMES QUI NE FONT PAS PARTI DU ON-SYSTEM  #########################################################################################
-# The following codes put any claims which we want to filter out and not hold reserves for into group ZZ2.
-# This replaces the previous deletion of these claims from &pays._CLMHDR_all in A2 Filter. DP 23/07/2014
-# S1-S7 are Santander business that is now reserved off system using bordereau.
-# H1-H6, HPA are Hispamer business that is now reserved off system using bordereau
-if {pays} = ES:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm Like "H1%"
-OR Schm Like "H2%"
-OR Schm Like "H3%"
-OR Schm Like "H4%"
-OR Schm Like "H5%"
-OR Schm Like "H6%"
-OR Schm Like "HPA%"
-OR Schm Like "S1%"
-OR Schm Like "S2%"
-OR Schm Like "S3%"
-OR Schm Like "S4%"
-OR Schm Like "S5%"
-OR Schm Like "S6%"
-OR Schm Like "S7%";
-Quit;
-# Linea Schms are reserved by loss ratio
-if {pays} =IT:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm Like "LN1%";
-Quit;
-# Norway TERRA Schms are excluded
-if {pays} = NO:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm IN("TA.1","TB.1","TC.1","TD.1","TE.1","TF.1","TG.1","TH.1","TI.1","TJ.1");
-Quit;
-# Added 08/06/2017 to deal with 501/502 uw codes.
-# Germany and turkey are only country which have these codes at time of writing, Underwriting company 501/502 need not be evaluated, so remove.
-if {pays} = DE OR {pays} = TR:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Undrwrtng_Cmpny IN ('501','502');
-Quit;
-# removing of CNP Santander TPA Schms for DK, FI, NO, SE
-if {pays} = DK:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm Like "5B%" or Schm like "5C%" or Schm like "1F%" or Schm like "1G%" ;
-Quit;
-if {pays} = FI:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm Like "SN%" ;
-Quit;
-if {pays} = NO:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm Like "ED.%" or Schm Like "EE.%" or Schm Like "EG.%" or Schm Like "EH.%" or Schm Like "EI.%" or Schm Like "EJ.%" or Schm Like "EK.%" or Schm Like "EL.%" or Schm Like "EM.%";
-Quit;
-if {pays}= SE:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm Like "ED.%" or Schm Like "EE.%" or Schm Like "EF.%" or Schm Like "EG.%" or Schm Like "EH.%" or Schm Like "EI.%" or Schm Like "EJ.%";
-Quit;
-# From Q3 2012 some claims started being classified under dummy Schms 8A.1 and ZA.1 due to them being in bulk and not having an
-# identifiable Schm.  These should not have reserves.
-if {pays} =SE:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm Like "ZA.%" ;
-Quit;
-# %DO block (non-iterative): %DO;
-Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm Like "8A.%";
-Quit;
-%END;
-# Capital One UK contract and run-off period ended on 27th November 2013
-if {pays} = UK:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm Like "CFA%" OR Schm Like "CFN%";
-Quit;
-# Ceasing business with the client DLFA in Denmark from 01/04/14 -
-# All claims then paid by client including those which are outstanding
-if {pays} = DK:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm Like "Q%";
-Quit;
-# Some Greece Schms have run off more than 12 months ago and terms and conditions
-# dont allow for claims 12 month after insurance period. Added by DP 23/07/2014
-if {pays} = GR:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm IN ("BPI.1","BPJ.1","BPK.1","BPL.1","BPM.1","EM1.1","EM2.1","GM1.1");
-Quit;
-# We had some German contracts that were terminated as part of project bounce.
-# We were required to pay claims up to a certain period. That period has now lapsed. Added by DP 23/07/2014
-if {pays} = DE:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm IN ("P4.2","P4.3");
-Quit;
-# Irish Santander Schms nearly run-off. Added by DP 03/11/2014
-if {pays} = IE:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Rsrv_Grp = "ZZ2"
-WHERE Schm IN ("EV.3","EV.4");
-Quit;
-# Switzerland Cembra Schms where the max number of payments had changed to 9 payments, but which hadn't been configured
-# in TIA. Information as to what Schms this applied to was taken from Taneem, and the email trail can be found saved here:
-# G:/Invest/RESERVES/International/ALL/RESULTS/201610/Cembra.msg
-# Added by TD 01/11/2016
-if {pays} = CH:
-    data &pays._CLMHDR_all;
-set &pays._CLMHDR_all;
-if Schm in ("GO.1", "GN.1", "G9.1", "G9.2", "G9.3", "G9.4",
-"G3.1", "G3.2", "G3.3", "G3.4", "G6.1", "G6.2", "G6.3", "GL.1", "GM.1")
-and year(Rgstrtn_Dt) > 2014
-and Max_Nmbr_Bnfts = 12 then Max_Nmbr_Bnfts = 9;
-run;
-# Some France UGIP claims on TIA but full history not loaded so continue reserving off-system . Added by DP 18/09/2014
-# %IF &pays. = FR %THEN %DO;
-# Proc Sql;
-# Update &pays._CLMHDR_all
-# Set Rsrv_Grp = "ZZ2"
-# WHERE Schm like "UG1%" or Schm like "UG6%" or Schm like "UG7%" or Schm like "UG8%"
-# or Schm like "UG9%" or Schm like "UGC%" or Schm like "UGD%" or Schm like "UGG%"
-# or Schm like "UGH%" or Schm like "UGI%" or Schm like "UGN%" or Schm like "UGX%";
-# Quit;
-# %END;
-# Some France GMAC policies needed to be switched from GL Type 101 to 102 (therefore underwritten by FACL) as part of the
-# AS60 transfer. Added by TD 09/09/2015
-if {pays} = FR:
-    Proc Sql;
-Update &pays._CLMHDR_all
-Set Undrwrtng_Cmpny = '102'
-Where Schm like "1%" and Cvr_Typ like "D%";
-Quit;
-# France claim with wrong Schm. Added by DP 18/08/2015
-if {pays} = FR:
-    Proc Sql;
-Update &pays._CLMHDR_all 
-Set Schm = "EFD.1"
-WHERE Clm_Nmbr = 1050126;
-Quit;
-# Portugal Fidelidade Schms loaded onto TIA but with wrong open date.  Set to notification date.
-# One-off adjustment for 2015Q3. Added by DP 18/08/2015
-# %IF &pays. = PT %THEN %DO;
-# Proc Sql;
-# Update &pays._CLMHDR_all
-# Set First_Open_Date = Notification_Date
-# WHERE Schm like "XAM%" or Schm like "XAN%";
-# Quit;
-# %END;
-# ###########################################################    Data correction    #########################################################################################
-# Correct the  monthly benefit it uses at product level for the average
-MNTHLY_BNFT_CORR = spark.sql(f"""SELECT h.Clm_Nmbr, h.Rsrv_Grp, h.Prdct, h.Schm, h.Cvr_Typ, h.Mnthly_Bnft,
-		0.00001 as Mnthly_Bnft_Corr, h.STATUS
-		FROM {pays}_CLMHDR_ALL h
-		INNER JOIN {pays}_MNTHLY_BNFT_LIMITS m
-		ON (h.Rsrv_Grp = m.Rsrv_Grp)
-		WHERE (h.Mnthly_Bnft < m.LOWER
-		or h.Mnthly_Bnft > m.UPPER
-		or h.Mnthly_Bnft = .)
-		AND h.STATUS in ('OP','RO')""")
-MNTHLY_BNFT_CORR.createOrReplaceTempView('MNTHLY_BNFT_CORR')
-
-MNTHLY_BNFT_AVRG_PRDCT = spark.sql(f"""SELECT h.Rsrv_Grp, h.Prdct, count(h.Clm_Nmbr) as COUNT, MEAN(h.Mnthly_Bnft) as AVG_Mnthly_Bnft,
-		STD(h.Mnthly_Bnft) as STD_Mnthly_Bnft
-		FROM {pays}_CLMHDR_ALL h
-		INNER JOIN WORK.{pays}_MNTHLY_BNFT_LIMITS m
-		ON (h.Rsrv_Grp = m.Rsrv_Grp)
-		WHERE h.Mnthly_Bnft > m.LOWER
-		AND h.Mnthly_Bnft < m.UPPER
-		GROUP BY h.Rsrv_Grp, h.Prdct""")
-MNTHLY_BNFT_AVRG_PRDCT.createOrReplaceTempView('MNTHLY_BNFT_AVRG_PRDCT')
-
-# Make average benefit by group.
-MNTHLY_BNFT_AVRG_GRP = spark.sql(f"""SELECT h.Rsrv_Grp, count(h.Clm_Nmbr) as COUNT, MEAN(h.Mnthly_Bnft) as AVG_Mnthly_Bnft,
-		STD(h.Mnthly_Bnft) as STD_Mnthly_Bnft
-		FROM {pays}_CLMHDR_ALL h
-		INNER JOIN WORK.{pays}_MNTHLY_BNFT_LIMITS m
-		ON (h.Rsrv_Grp = m.Rsrv_Grp)
-		WHERE h.Mnthly_Bnft > m.LOWER
-		AND h.Mnthly_Bnft < m.UPPER
-		GROUP BY h.Rsrv_Grp""")
-MNTHLY_BNFT_AVRG_GRP.createOrReplaceTempView('MNTHLY_BNFT_AVRG_GRP')
-
-MNTHLY_BNFT_CORR = spark.sql("""SELECT UNIQUE c.Clm_Nmbr, c.Rsrv_Grp, c.Prdct, c.Schm, c.Cvr_Typ, c.Mnthly_Bnft as OLD_Mnthly_Bnft,
-		case when p.COUNT>9 then p.Avg_Mnthly_Bnft
-		else g.Avg_Mnthly_Bnft end as Mnthly_Bnft,
-		c.STATUS
-		FROM MNTHLY_BNFT_CORR c
-		LEFT JOIN MNTHLY_BNFT_AVRG_PRDCT p
-		ON (c.Prdct = p.Prdct and c.Rsrv_Grp = p.Rsrv_Grp)
-		LEFT JOIN MNTHLY_BNFT_AVRG_GRP g
-		ON (c.Rsrv_Grp = g.Rsrv_Grp)
-		GROUP BY c.Clm_Nmbr""")
-MNTHLY_BNFT_CORR.createOrReplaceTempView('MNTHLY_BNFT_CORR')
-
-_dfs[f'{pays}_CLMHDR_ALL'] = spark.table(f'{pays}_CLMHDR_ALL').orderBy('Clm_Nmbr')
-_dfs[f'{pays}_CLMHDR_ALL'].createOrReplaceTempView(f'{pays}_CLMHDR_ALL')
-
-_dfs[f'{pays}_CLMHDR_ALL'] = spark.table('pays').join(spark.table('_CLMHDR_ALL'), ['Clm_Nmbr'], 'left')
-_dfs[f'{pays}_CLMHDR_ALL'] = _dfs[f'{pays}_CLMHDR_ALL'].drop('OLD_Mnthly_Bnft')
-_dfs[f'{pays}_CLMHDR_ALL'].createOrReplaceTempView(f'{pays}_CLMHDR_ALL')
-
-# Correct the OTSTNDNG_BLNC it uses at product level for the average
-CLAIMS_IN_CLMTRNS = spark.sql(f"""SELECT UNIQUE t.CLA_CASE_NO AS Clm_Nmbr , max(t.TRANS_DATE) format=ddmmyy10. as TRANS_DATE, h.FIRST_OPEN_DATE,
-		h.FIRST_CLOSE_DATE, h.REOPEN_DATE, h.RECLOSE_DATE, h.STATUS, 
-		SUM(-GROSS_AMT) as AMT 
-		FROM DATA.{pays}_CLMTRNS t
-		INNER JOIN DATA.{pays}_CLMHDR h ON (h.CLA_CASE_NO = t.CLA_CASE_NO)
-		WHERE ITEM_CLASS in (2,3,4)
-		GROUP BY t.CLA_CASE_NO, h.FIRST_OPEN_DATE, h.FIRST_CLOSE_DATE, h.REOPEN_DATE, h.RECLOSE_DATE,
-		 h.STATUS""")
-CLAIMS_IN_CLMTRNS.createOrReplaceTempView('CLAIMS_IN_CLMTRNS')
+    # ═══════════════════════════════════════════════════════════════════
+    # 12. Correction GAP potential amount (groupe GP1)
+    # ═══════════════════════════════════════════════════════════════════
+    pot_avg = spark.sql(f"""
+        SELECT h.Rsrv_Grp, count(h.Clm_Nmbr) AS COUNT, mean(h.POTENTIAL_CLM_AMT) AS AVG_POTENTIAL_CLM_AMT
+        FROM {INPUT_SCHEMA}.{pays}_CLMHDR_ALL h
+        WHERE h.STATUS IN ('OP','RO') AND h.Rsrv_Grp = 'GP1'
+        GROUP BY h.Rsrv_Grp
+    """)
+    pot_avg.createOrReplaceTempView("POTENTIAL_CLM_AMT_AVRG_GRP")
+    pot_corr = spark.sql(f"""
+        SELECT DISTINCT c.Clm_Nmbr,
+               CASE WHEN c.POTENTIAL_CLM_AMT = 0 THEN p.AVG_POTENTIAL_CLM_AMT
+                    ELSE c.POTENTIAL_CLM_AMT END AS POTENTIAL_CLM_AMT
+        FROM (
+            SELECT h.Clm_Nmbr, h.Rsrv_Grp, h.POTENTIAL_CLM_AMT
+            FROM {INPUT_SCHEMA}.{pays}_CLMHDR_ALL h
+            WHERE h.STATUS IN ('OP','RO') AND h.Rsrv_Grp = 'GP1'
+        ) c
+        LEFT JOIN POTENTIAL_CLM_AMT_AVRG_GRP p ON c.Rsrv_Grp = p.Rsrv_Grp
+    """)
+    pot_corr.createOrReplaceTempView("POTENTIAL_CLM_AMT_CORR")
+    # Appliquer
+    df = (spark.table(f"{INPUT_SCHEMA}.{pays}_CLMHDR_ALL")
+          .join(pot_corr.select("Clm_Nmbr",
+                    F.col("POTENTIAL_CLM_AMT").alias("POT_new")), ["Clm_Nmbr"], "left")
+          .withColumn("POTENTIAL_CLM_AMT",
+              F.when(F.col("POT_new").isNotNull(), F.col("POT_new"))
+               .otherwise(F.col("POTENTIAL_CLM_AMT")))
+          .drop("POT_new"))
+    df.write.mode("overwrite").saveAsTable(f"{INPUT_SCHEMA}.{pays}_CLMHDR_ALL")
 
 
-# KO : ligne 612
-# PROC SQL;
-		UPDATE &pays._CLMHDR_ALL
-		SET OUTSTANDING_LIFE_BALANCE = OUTSTANDING_NONLIFE_BALANCE
-		WHERE OUTSTANDING_LIFE_BALANCE in (.,0);
-QUIT;
-# fin KO
+# ═══════════════════════════════════════════════════════════════════════
+# EXÉCUTION
+# ═══════════════════════════════════════════════════════════════════════
+pays_list = [
+    "FI", "UK", "FR", "SE", "PT", "DE", "NO", "ES", "CH", "IT",
+    "PL", "IE", "NL", "NI", "GR", "TR", "DK", "AT", "BE", "CO",
+    "MX", "LT", "LV", "EE",
+    # "LU",
+]
 
-OTSTNDNG_BLNC_CORR = spark.sql(f"""SELECT UNIQUE h.Clm_Nmbr, h.Rsrv_Grp, h.Prdct, h.Schm, h.Cvr_Typ, h.OUTSTANDING_LIFE_BALANCE,
-		0.00001 as Otstndng_Balnc_Corr, h.STATUS
-		FROM {pays}_CLMHDR_ALL h
-		INNER JOIN {pays}_OTSTANDING_BLNC_LIMITS m
-		ON (h.Rsrv_Grp = m.Rsrv_Grp)
-		WHERE STATUS in ('OP','RO')
-		and (h.OUTSTANDING_LIFE_BALANCE < m.LOWER
-		or h.OUTSTANDING_LIFE_BALANCE > m.UPPER
-		or h.OUTSTANDING_LIFE_BALANCE is null)""")
-OTSTNDNG_BLNC_CORR.createOrReplaceTempView('OTSTNDNG_BLNC_CORR')
+for pays in pays_list:
+    print(f"Correction claims pour {pays}...")
+    try:
+        data_correction(pays)
+    except Exception as e:
+        print(f"  ⚠ {pays} : {e}")
 
-OTSTANDING_BLNC_AVRG_PRDCT = spark.sql(f"""SELECT UNIQUE h.Rsrv_Grp, h.Prdct, count(h.Clm_Nmbr) as COUNT, MEAN(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
-		FROM Claims_in_CLMTRNS t
-		INNER JOIN {pays}_CLMHDR_ALL h
-		ON (t.Clm_Nmbr = h.Clm_Nmbr)
-		INNER JOIN {pays}_OTSTANDING_BLNC_LIMITS m
-		ON (h.Rsrv_Grp = m.Rsrv_Grp)
-		WHERE t.AMT > m.LOWER
-		AND t.AMT < m.UPPER
-		AND t.AMT <> .
-		GROUP BY m.Rsrv_Grp, h.Prdct""")
-OTSTANDING_BLNC_AVRG_PRDCT.createOrReplaceTempView('OTSTANDING_BLNC_AVRG_PRDCT')
-
-OTSTANDING_BLNC_AVRG_GRP = spark.sql(f"""SELECT UNIQUE h.Rsrv_Grp, count(h.Clm_Nmbr) as COUNT, MEAN(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
-		FROM Claims_in_CLMTRNS t
-		INNER JOIN {pays}_CLMHDR_ALL h
-		ON (t.Clm_Nmbr = h.Clm_Nmbr)
-		INNER JOIN {pays}_OTSTANDING_BLNC_LIMITS m
-		ON (h.Rsrv_Grp = m.Rsrv_Grp)
-		WHERE t.AMT > m.LOWER
-		AND t.AMT < m.UPPER
-		AND t.AMT <> .
-		GROUP BY m.Rsrv_Grp""")
-OTSTANDING_BLNC_AVRG_GRP.createOrReplaceTempView('OTSTANDING_BLNC_AVRG_GRP')
-
-Otstndng_blnc_corr = spark.sql("""SELECT UNIQUE c.Clm_Nmbr, c.Rsrv_Grp, c.Prdct, c.Schm, c.Cvr_Typ, c.OUTSTANDING_LIFE_BALANCE as OLD_OUTSTANDING_LIFE_BALANCE,
-		case when p.COUNT>9 then p.AVG_AMT
-			 else g.AVG_AMT end as OUTSTANDING_LIFE_BALANCE,
-		c.STATUS
-		FROM Otstndng_blnc_corr c
-		LEFT JOIN OTSTANDING_BLNC_AVRG_PRDCT p
-		ON (c.Prdct = p.Prdct and c.Rsrv_Grp = p.Rsrv_Grp)
-		LEFT JOIN OTSTANDING_BLNC_AVRG_GRP g
-		ON (c.Rsrv_Grp = g.Rsrv_Grp)
-		GROUP BY c.Clm_Nmbr""")
-Otstndng_blnc_corr.createOrReplaceTempView('Otstndng_blnc_corr')
-
-_dfs[f'{pays}_CLMHDR_ALL'] = spark.table(f'{pays}_CLMHDR_ALL').orderBy('Clm_Nmbr')
-_dfs[f'{pays}_CLMHDR_ALL'].createOrReplaceTempView(f'{pays}_CLMHDR_ALL')
-
-_dfs[f'{pays}_CLMHDR_ALL'] = spark.table('pays').join(spark.table('_CLMHDR_ALL'), ['Clm_Nmbr'], 'left')
-_dfs[f'{pays}_CLMHDR_ALL'] = _dfs[f'{pays}_CLMHDR_ALL'].drop('OLD_OUTSTANDING_LIFE_BALANCE')
-_dfs[f'{pays}_CLMHDR_ALL'].createOrReplaceTempView(f'{pays}_CLMHDR_ALL')
-
-_dfs[f'{pays}_CLMHDR_ALL'] = spark.table(f'{pays}_CLMHDR_ALL')
-_dfs[f'{pays}_CLMHDR_ALL'] = (_dfs[f'{pays}_CLMHDR_ALL']
-    .withColumn('OUTSTANDING_LIFE_BALANCE', F.when(F.expr("""OUTSTANDING_LIFE_BALANCE IS NULL"""), F.lit(0)))
-)
-_dfs[f'{pays}_CLMHDR_ALL'] = _dfs[f'{pays}_CLMHDR_ALL'].drop('OUTSTANDING_NONLIFE_BALANCE')
-_dfs[f'{pays}_CLMHDR_ALL'] = _dfs[f'{pays}_CLMHDR_ALL'].withColumnRenamed('OUTSTANDING_LIFE_BALANCE', 'Otstndng_Balnc')
-_dfs[f'{pays}_CLMHDR_ALL'].createOrReplaceTempView(f'{pays}_CLMHDR_ALL')
-# LIBNAME INPUT -> base Spark: input.{pays}_CLMHDR_ALL
-_dfs[f'{pays}_CLMHDR_ALL'].write.mode('overwrite').saveAsTable(f'input.{pays}_CLMHDR_ALL')
-
-# Make average GAP potential Amont by group.
-POTENTIAL_CLM_AMT_CORR = spark.sql(f"""SELECT h.Clm_Nmbr, h.Rsrv_Grp, h.Prdct, h.Schm, h.Cvr_Typ, h.POTENTIAL_CLM_AMT,
-		0.00001 as POTENTIAL_CLM_AMT_Corr, h.STATUS
-		FROM INPUT.{pays}_CLMHDR_ALL h
-		WHERE h.STATUS in ('OP','RO') and h.Rsrv_Grp='GP1' """)
-POTENTIAL_CLM_AMT_CORR.createOrReplaceTempView('POTENTIAL_CLM_AMT_CORR')
-
-# Make average GAP potential Amont by group.
-POTENTIAL_CLM_AMT_AVRG_GRP = spark.sql("""SELECT h.Rsrv_Grp, count(h.Clm_Nmbr) as COUNT, MEAN(h.POTENTIAL_CLM_AMT) as AVG_POTENTIAL_CLM_AMT,
-		STD(h.POTENTIAL_CLM_AMT) as STD_POTENTIAL_CLM_AMT
-		FROM POTENTIAL_CLM_AMT_CORR h
-		GROUP BY h.Rsrv_Grp""")
-POTENTIAL_CLM_AMT_AVRG_GRP.createOrReplaceTempView('POTENTIAL_CLM_AMT_AVRG_GRP')
-
-POTENTIAL_CLM_AMT_CORR = spark.sql("""SELECT UNIQUE c.Clm_Nmbr, c.Rsrv_Grp, c.Prdct, c.Schm, c.Cvr_Typ, c.POTENTIAL_CLM_AMT as OLD_POTENTIAL_CLM_AMT,
-		case when c.POTENTIAL_CLM_AMT=0 then p.AVG_POTENTIAL_CLM_AMT
-			 else c.POTENTIAL_CLM_AMT end as POTENTIAL_CLM_AMT,
-		c.STATUS
-		FROM POTENTIAL_CLM_AMT_CORR c
-		LEFT JOIN POTENTIAL_CLM_AMT_AVRG_GRP p
-		ON ( c.Rsrv_Grp = p.Rsrv_Grp)
-		GROUP BY c.Clm_Nmbr""")
-POTENTIAL_CLM_AMT_CORR.createOrReplaceTempView('POTENTIAL_CLM_AMT_CORR')
-
-_dfs[f'{pays}_CLMHDR_ALL'] = spark.table(f'{pays}_CLMHDR_ALL').orderBy('Clm_Nmbr')
-_dfs[f'{pays}_CLMHDR_ALL'].createOrReplaceTempView(f'{pays}_CLMHDR_ALL')
-
-_dfs[f'{pays}_CLMHDR_ALL'] = spark.table('INPUT').join(spark.table('pays'), ['Clm_Nmbr'], 'left')
-_dfs[f'{pays}_CLMHDR_ALL'] = _dfs[f'{pays}_CLMHDR_ALL'].drop('OLD_POTENTIAL_CLM_AMT')
-_dfs[f'{pays}_CLMHDR_ALL'].createOrReplaceTempView(f'{pays}_CLMHDR_ALL')
-# LIBNAME INPUT -> base Spark: input.{pays}_CLMHDR_ALL
-_dfs[f'{pays}_CLMHDR_ALL'].write.mode('overwrite').saveAsTable(f'input.{pays}_CLMHDR_ALL')
-
-mend()
-data_corecction(pays="FI")
-data_corecction(pays="UK")
-data_corecction(pays="FR")
-data_corecction(pays="SE")
-data_corecction(pays="PT")
-data_corecction(pays="DE")
-data_corecction(pays="NO")
-data_corecction(pays="ES")
-data_corecction(pays="CH")
-data_corecction(pays="IT")
-data_corecction(pays="PL")
-data_corecction(pays="DE")
-data_corecction(pays="IE")
-data_corecction(pays="NL")
-data_corecction(pays="NI")
-data_corecction(pays="GR")
-data_corecction(pays="TR")
-data_corecction(pays="DK")
-data_corecction(pays="AT")
-data_corecction(pays="BE")
-data_corecction(pays="CO")
-data_corecction(pays="MX")
-data_corecction(pays="LT")
-data_corecction(pays="LV")
-data_corecction(pays="EE")
-# %DATA_CORECCTION(pays=LU) ;
+print("Correction terminée.")
