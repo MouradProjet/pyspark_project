@@ -40,14 +40,15 @@ _dfs[f'wps_daap_case_reserves_{yr}{month}{day}'] = spark.sql(f"""SELECT DISTINCT
 FROM {ouput}.wps_daap_case_reserves_{yr}{month}{day}
 group by country, Clm_Nmbr""")
 _dfs[f'wps_daap_case_reserves_{yr}{month}{day}'].createOrReplaceTempView(f'wps_daap_case_reserves_{yr}{month}{day}')
+_dfs[f'wps_daap_case_reserves_{yr}{month}{day}'].write.mode('overwrite').saveAsTable(f'{ouput}.wps_daap_case_reserves_{yr}{month}{day}')
 
 import_01 = f"{lreseau}/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM/CASES RESERVES/Model Properties/SDB.xlsx"
 def import_excel(file, out, onglet):
-        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
-            .option('dataAddress', f'{onglet}!A1')
-            .option('header', 'true')
-            .load(file))
-        _df_tmp.createOrReplaceTempView(out)
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', f"'{onglet}'!A1")
+        .option('header', 'true')
+        .load(file))
+    _df_tmp.createOrReplaceTempView(f'{out}')
 
 
 import_excel(file=import_01, out="flag_legacy", onglet="flag_legacy")
@@ -62,8 +63,10 @@ _dfs[f'wps_daap_case_reserves_{yr}{month}{day}'].createOrReplaceTempView(f'wps_d
 
 _dfs[f'wps_daap_case_reserves_{yr}{month}{day}'] = spark.table(f'wps_daap_case_reserves_{yr}{month}{day}')
 _dfs[f'wps_daap_case_reserves_{yr}{month}{day}'] = (_dfs[f'wps_daap_case_reserves_{yr}{month}{day}']
-    .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao IN ('MACAO')"""), F.lit('MACAO')))
-    .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao  IN ('TIA','')"""), F.lit('TIA')))
+    .withColumn('LEGACY_SCHEME_BOOK',
+    F.when(F.expr("""Flag_Macao IN ('MACAO')"""), F.lit('MACAO'))
+     .when(F.expr("""Flag_Macao  IN ('TIA', '')"""), F.lit('TIA'))
+     .otherwise(F.col('LEGACY_SCHEME_BOOK')))
 )
 _dfs[f'wps_daap_case_reserves_{yr}{month}{day}'].createOrReplaceTempView(f'wps_daap_case_reserves_{yr}{month}{day}')
 
@@ -129,8 +132,10 @@ _dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}'].createOrReplaceTempView(f'WPS_DAAP_IBNR_
 
 _dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}'] = spark.table(f'WPS_DAAP_IBNR_{yr}{month}{day}').unionByName(spark.table(f'{ouput}.WPS_DAAP_NCC_{yr}{month}{day}'), allowMissingColumns=True)
 _dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}'] = (_dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}']
-    .withColumn('Vintage_year', F.when(F.expr("""Vintage_year=''"""), F.lit(9999)))
-    .withColumn('Vintage_year', F.when(F.expr("""Vintage_year IN (2026,5015,2918,2077,2088,3007)"""), F.lit(9999)))
+    .withColumn('Vintage_year',
+    F.when(F.expr("""Vintage_year=''"""), F.lit(9999))
+     .when(F.expr("""Vintage_year IN (2026, 5015,2918,2077,2088,3007)"""), F.lit(9999))
+     .otherwise(F.col('Vintage_year')))
 )
 _dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}'].createOrReplaceTempView(f'WPS_DAAP_IBNR_{yr}{month}{day}')
 # LIBNAME {ouput} -> base Spark: {ouput}.WPS_DAAP_IBNR_{yr}{month}{day}
@@ -138,9 +143,9 @@ _dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}'].write.mode('overwrite').saveAsTable(f'{o
 
 _dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}'] = spark.table(f'{ouput}.WPS_DAAP_IBNR_{yr}{month}{day}')
 _dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}'] = (_dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}']
-    .withColumn('date_of_reserving', F.when(F.col('date_of_reserving') == f" {yr}substr({arrete},9,2)", F.lit(f'substring({arrete},9,2){yr}')))
-    .withColumn('country', F.when(F.expr("""country = ''"""), F.lit('ES')))
-    .withColumn('entity', F.when(F.expr("""country = 'ES' AND entity = ''"""), F.lit('FICL')))
+    .withColumn('date_of_reserving', F.when(F.col('date_of_reserving') == f" {yr}substr({arrete},9,2)", F.lit(f'substring({arrete},9,2){yr}')).otherwise(F.col('date_of_reserving')))
+    .withColumn('country', F.when(F.expr("""country = ''"""), F.lit('ES')).otherwise(F.col('country')))
+    .withColumn('entity', F.when(F.expr("""country = 'ES' AND entity = ''"""), F.lit('FICL')).otherwise(F.col('entity')))
 )
 _dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}'].createOrReplaceTempView(f'WPS_DAAP_IBNR_{yr}{month}{day}')
 # LIBNAME {ouput} -> base Spark: {ouput}.WPS_DAAP_IBNR_{yr}{month}{day}
@@ -157,11 +162,11 @@ _dfs[f'WPS_DAAP_IBNR_{yr}{month}{day}'].createOrReplaceTempView(f'WPS_DAAP_IBNR_
 
 import_01 = f"{lreseau}/08.Progammes/INTERNATIONAL/06_Inventaire CLP/2021_11_Q4/02_Elements_Techniques/TIA/Extraction Donnees/20210408 List TIA scheme exclusion - C and TPA.xlsx"
 def import_excel(file, out, onglet):
-        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
-            .option('dataAddress', f'{onglet}!A1')
-            .option('header', 'true')
-            .load(file))
-        _df_tmp.createOrReplaceTempView(out)
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', f"'{onglet}'!A1")
+        .option('header', 'true')
+        .load(file))
+    _df_tmp.createOrReplaceTempView(f'{out}')
 
 
 import_excel(file=import_01, out="flag_double", onglet="Sheet1")
