@@ -23,11 +23,11 @@ spark.sql('CREATE SCHEMA IF NOT EXISTS output2')  # base Spark pour LIBNAME Outp
 # Import de la SDB
 import_01 = f"~/NAS/{lreseau}/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete2}/02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM/CASES RESERVES/Model Properties/SDB.xlsx"
 def import_excel(file, out, onglet):
-        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
-            .option('dataAddress', f'{onglet}!A1')
-            .option('header', 'true')
-            .load(file))
-        _df_tmp.createOrReplaceTempView(out)
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', f"'{onglet}'!A1")
+        .option('header', 'true')
+        .load(file))
+    _df_tmp.createOrReplaceTempView(f'{out}')
 
 
 import_excel(file=import_01, out="SDB", onglet="SDB")
@@ -368,10 +368,12 @@ def rsrv_mvt(pays, exer1, exer2):
 
     Mvt_ICOP = spark.table('Stock_ICOP')
     Mvt_ICOP = (Mvt_ICOP
-        .withColumn('Amt', F.when(F.expr(f"""Rsrv_Typ_{exer1} ='ICOP'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})""")))
-        .withColumn('Amt', F.when(F.expr(f"""Rsrv_Typ_{exer1} ='RBNP'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})""")))
-        .withColumn('Amt', F.when(F.expr(f"""Rsrv_Typ_{exer1} ='CLOSE'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})""")))
-        .withColumn('Amt', F.when(F.expr(f"""Missing (Rsrv_Typ_{exer1} )"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})""")))
+        .withColumn('Amt',
+        F.when(F.expr(f"""Rsrv_Typ_{exer1} ='ICOP'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})"""))
+         .when(F.expr(f"""Rsrv_Typ_{exer1} ='RBNP'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})"""))
+         .when(F.expr(f"""Rsrv_Typ_{exer1} ='CLOSE'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})"""))
+         .when(F.expr(f"""Missing (Rsrv_Typ_{exer1} )"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})"""))
+         .otherwise(F.col('Amt')))
     )
     Mvt_ICOP.createOrReplaceTempView('Mvt_ICOP')
 
@@ -433,10 +435,12 @@ def rsrv_mvt(pays, exer1, exer2):
 
     Mvt_RBNP = spark.table('Stock_RBNP')
     Mvt_RBNP = (Mvt_RBNP
-        .withColumn('Amt', F.when(F.expr(f"""Rsrv_Typ_{exer1} ='ICOP'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})""")))
-        .withColumn('Amt', F.when(F.expr(f"""Rsrv_Typ_{exer1} ='RBNP'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})""")))
-        .withColumn('Amt', F.when(F.expr(f"""Rsrv_Typ_{exer1} ='CLOSE'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})""")))
-        .withColumn('Amt', F.when(F.expr(f"""Missing (Rsrv_Typ_{exer1} )"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})""")))
+        .withColumn('Amt',
+        F.when(F.expr(f"""Rsrv_Typ_{exer1} ='ICOP'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})"""))
+         .when(F.expr(f"""Rsrv_Typ_{exer1} ='RBNP'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})"""))
+         .when(F.expr(f"""Rsrv_Typ_{exer1} ='CLOSE'"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})"""))
+         .when(F.expr(f"""Missing (Rsrv_Typ_{exer1} )"""), F.expr(f"""aggregate(Rsrv_Amt_{exer2})"""))
+         .otherwise(F.col('Amt')))
     )
     Mvt_RBNP.createOrReplaceTempView('Mvt_RBNP')
 
