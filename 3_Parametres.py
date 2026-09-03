@@ -1,66 +1,84 @@
-# -*- coding: utf-8 -*-
-"""
-SPECIFICATION — chargement des paramètres pays (Model Properties).
-
-Chaque pays a un fichier Excel '{pays} Model Properties.xlsx' contenant
-plusieurs feuilles (RESERVE_GROUP_SPEC, MNTHLY_BNFT_LIMITS, ...).
-Chaque feuille est chargée dans une temp view {pays}_{FEUILLE}.
-"""
-
+from pyspark.sql import functions as F
+from pyspark.sql import Window
 from pyspark.sql import SparkSession
-
+from pyspark.sql.types import *
+import datetime
 spark = SparkSession.builder.getOrCreate()
+_dfs = {}  # container for DataFrames with dynamic names (macro variables)
 
-balancedate = "26/06/2026"   # dernier vendredi du trimestre
-arrete      = "2026_06_Prov"
-
-
-def import_sheet(fichier, feuille, vue):
-    """Lit une feuille précise d'un fichier Excel dans une temp view."""
-    df = (spark.read.format("com.crealytics.spark.excel")
-          .option("dataAddress", f"'{feuille}'!A1")
-          .option("header", "true")
-          .load(fichier))
-    df.createOrReplaceTempView(vue)
-
-
+balancedate = "26/06/2026"
+arrete = "2026_06_Prov"
 def specification(pays):
-    """Charge toutes les feuilles de paramètres pour un pays."""
-    fichier = (f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}"
-               f"/02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM"
-               f"/CASES RESERVES/Model Properties/{pays} Model Properties.xlsx")
+    import_ = f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM/CASES RESERVES/Model Properties/{pays} Model Properties.xlsx"
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', "'RESERVE_GROUP_SPEC'!A1")
+        .option('header', 'true')
+        .load(import_))
+    _df_tmp.createOrReplaceTempView(f'{pays}_RESERVE_GROUP_SPEC')
 
-    # ── Feuilles communes à tous les pays ──────────────────────────────
-    import_sheet(fichier, "RESERVE_GROUP_SPEC",     f"{pays}_RESERVE_GROUP_SPEC")
-    import_sheet(fichier, "MNTHLY_BNFT_LIMITS",     f"{pays}_MNTHLY_BNFT_LIMITS")
-    import_sheet(fichier, "OTSTANDING_BLNC_LIMITS", f"{pays}_OTSTANDING_BLNC_LIMITS")
-    import_sheet(fichier, "TRANS_TYPE_MAP",         f"{pays}_TRANS_TYPE_MAP")
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', "'MNTHLY_BNFT_LIMITS'!A1")
+        .option('header', 'true')
+        .load(import_))
+    _df_tmp.createOrReplaceTempView(f'{pays}_MNTHLY_BNFT_LIMITS')
 
-    # ── Feuilles supplémentaires pour la FRANCE ────────────────────────
-    if pays == "FR":
-        import_sheet(fichier, "SCHEME_DATABASE", f"{pays}_SCHEME_DATABASE")
-        import_sheet(fichier, "BEN_POUC",        f"{pays}_BEN_POUC")
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', "'OTSTANDING_BLNC_LIMITS'!A1")
+        .option('header', 'true')
+        .load(import_))
+    _df_tmp.createOrReplaceTempView(f'{pays}_OTSTANDING_BLNC_LIMITS')
 
-    # ── Feuille supplémentaire pour le UK ──────────────────────────────
-    if pays == "UK":
-        import_sheet(fichier, "FIXED_BNFT_LIMITS", f"{pays}FIXED_BNFT_LIMITS")
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', "'TRANS_TYPE_MAP'!A1")
+        .option('header', 'true')
+        .load(import_))
+    _df_tmp.createOrReplaceTempView(f'{pays}_TRANS_TYPE_MAP')
 
+    if pays == 'FR':
+        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+            .option('dataAddress', "'SCHEME_DATABASE'!A1")
+            .option('header', 'true')
+            .load(import_))
+        _df_tmp.createOrReplaceTempView(f'{pays}_SCHEME_DATABASE')
+    
+        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+            .option('dataAddress', "'BEN_POUC'!A1")
+            .option('header', 'true')
+            .load(import_))
+        _df_tmp.createOrReplaceTempView(f'{pays}_BEN_POUC')
+    
+    if pays == 'UK':
+        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+            .option('dataAddress', "'FIXED_BNFT_LIMITS'!A1")
+            .option('header', 'true')
+            .load(import_))
+        _df_tmp.createOrReplaceTempView(f'{pays}FIXED_BNFT_LIMITS')
+    
+    # %DO;
+    # %END;
 
-# ═══════════════════════════════════════════════════════════════════════
-# EXÉCUTION POUR TOUS LES PAYS
-# ═══════════════════════════════════════════════════════════════════════
-pays_list = [
-    "UK", "FI", "FR", "SE", "PT", "DE", "PL", "IT", "NO", "ES",
-    "IE", "NI", "NL", "GR", "TR", "CH", "DK", "AT", "BE", "CO",
-    "MX", "LT", "LV", "EE",
-    # "LU",  # commenté dans le SAS
-]
-
-for pays in pays_list:
-    print(f"Chargement des Model Properties pour {pays}...")
-    try:
-        specification(pays)
-    except Exception as e:
-        print(f"  ⚠ {pays} : {e}")
-
-print("Chargement terminé.")
+specification(pays="UK")
+specification(pays="FI")
+specification(pays="FR")
+specification(pays="SE")
+specification(pays="PT")
+specification(pays="DE")
+specification(pays="PL")
+specification(pays="IT")
+specification(pays="NO")
+specification(pays="ES")
+specification(pays="IE")
+specification(pays="NI")
+specification(pays="NL")
+specification(pays="GR")
+specification(pays="TR")
+specification(pays="CH")
+specification(pays="DK")
+specification(pays="AT")
+specification(pays="BE")
+specification(pays="CO")
+specification(pays="MX")
+specification(pays="LT")
+specification(pays="LV")
+specification(pays="EE")
+# %Specification(pays=LU) ;
