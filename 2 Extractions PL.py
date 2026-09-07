@@ -10,19 +10,19 @@ _dfs = {}  # container for DataFrames with dynamic names (macro variables)
 # ################### INVENTAIRE TIA #################
 # ####################################################
 def import_excel(datafile, out, onglet):
-        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
-            .option('dataAddress', f'{onglet}!A1')
-            .option('header', 'true')
-            .load(datafile))
-        _df_tmp.createOrReplaceTempView(out)
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', f"'{onglet}'!A1")
+        .option('header', 'true')
+        .load(datafile))
+    _df_tmp.createOrReplaceTempView(f'{out}')
 
 
 def import_excelx(datafile, out, onglet):
-        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
-            .option('dataAddress', f'{onglet}!A1')
-            .option('header', 'true')
-            .load(datafile))
-        _df_tmp.createOrReplaceTempView(out)
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', f"'{onglet}'!A1")
+        .option('header', 'true')
+        .load(datafile))
+    _df_tmp.createOrReplaceTempView(f'{out}')
 
 
 def export_excel(database, datatable, sheet):
@@ -53,7 +53,7 @@ def extract_data(country):
           scheme_version,
           cover_code_vorig as cover, 
           cohort_date as GEN ,
-          (incident_date) as SURV format = ddmmyy10.,
+          (incident_date) as SURV ,
           insurance_type_macro as ins_type, 
           local_currency as currency_code, 
           countryid_vorig as country, 
@@ -61,7 +61,7 @@ def extract_data(country):
           axa_risk_carrier as entity_name , 
           partner_name_vorig as AGENT_NAME_ORIG ,  
           kpi_name_0 as account_hierarchy_name,
-          sum(amt_local_currency) FORMAT = NLBEST12. AS amt
+          sum(amt_local_currency)  AS amt
               
     from TIA.GLOBAL_PL_{country}
     group by   gl_period,occurence_period, scheme_id,scheme_version,cover_code_vorig, incident_date,cohort_date,insurance_type_macro, local_currency, countryid_vorig,axa_entity_code, axa_risk_carrier, partner_name_vorig, kpi_name_0 """)
@@ -79,9 +79,11 @@ def extract_data(country):
              .when(F.expr("""account_hierarchy_name IN ('Profit Share - Direct','Profit Share - Accepted' ,'Profit Share - BLE Settlement')"""), F.lit('PS_PAID'))
              .when(F.expr("""account_hierarchy_name IN ('Claims Paid - Ceded')"""), F.lit('CLAIM_CED'))
              .otherwise(F.lit('')))
-        .withColumn('Type_Insurance', F.when(F.expr("""ins_type IN ('DIRECT UNDERWRITER','DIRECT INSURER')"""), F.lit(0)))
-        .withColumn('Type_Insurance', F.when(F.expr("""account_hierarchy_name IN ('Claims Paid - Ceded','Gross Commissions - Ceded','Gross Written Premiums gross of Cancellations - Ceded') AND Type_Insurance=0"""), F.lit(11)))
-        .withColumn('Type_Insurance', F.when(F.expr("""account_hierarchy_name IN ('Claims Paid - Ceded','Gross Commissions - Ceded','Gross Written Premiums gross of Cancellations - Ceded') AND Type_Insurance=4"""), F.lit(8)))
+        .withColumn('Type_Insurance',
+        F.when(F.expr("""ins_type IN ('DIRECT UNDERWRITER', 'DIRECT INSURER')"""), F.lit(0))
+         .when(F.expr("""account_hierarchy_name IN ('Claims Paid - Ceded', 'Gross Commissions - Ceded','Gross Written Premiums gross of Cancellations - Ceded') AND Type_Insurance=0"""), F.lit(11))
+         .when(F.expr("""account_hierarchy_name IN ('Claims Paid - Ceded', 'Gross Commissions - Ceded','Gross Written Premiums gross of Cancellations - Ceded') AND Type_Insurance=4"""), F.lit(8))
+         .otherwise(F.col('Type_Insurance')))
         .withColumn('year_gen', F.expr("""substring(GEN,1,4)*1"""))
         .withColumn('month_gen', F.expr("""substring(GEN,6,7)*1"""))
         .withColumn('GEN2', F.expr("""make_date(month_gen, 01, year_gen)"""))
@@ -90,10 +92,10 @@ def extract_data(country):
         .withColumn('year_gl', F.expr("""substring(gl_period,1,4)*1"""))
         .withColumn('month_gl', F.expr("""substring(gl_period,6,7)*1"""))
         .withColumn('SURV2', F.expr("""make_date(month_surv, 01, year_surv)"""))
-        .withColumn('occurence_period2', F.when(F.expr("""month_surv IN (1,2,3,4,5,6,7,8,9)"""), F.expr("""concat(year_surv,"0",month_surv)""")))
-        .withColumn('occurence_period2', F.when(F.expr("""month_surv IN (10,11,12)"""), F.expr("""concat(year_surv,month_surv)""")))
-        .withColumn('gl_period2', F.when(F.expr("""month_gl IN (1,2,3,4,5,6,7,8,9)"""), F.expr("""concat(year_gl,"0",month_gl)""")))
-        .withColumn('gl_period2', F.when(F.expr("""month_gl IN (10,11,12)"""), F.expr("""concat(year_gl,month_gl)""")))
+        .withColumn('occurence_period2', F.when(F.expr("""month_surv IN (1,2,3,4,5,6,7,8,9)"""), F.expr("""concat(year_surv,"0",month_surv)""")).otherwise(F.col('occurence_period2')))
+        .withColumn('occurence_period2', F.when(F.expr("""month_surv IN (10,11,12)"""), F.expr("""concat(year_surv,month_surv)""")).otherwise(F.col('occurence_period2')))
+        .withColumn('gl_period2', F.when(F.expr("""month_gl IN (1,2,3,4,5,6,7,8,9)"""), F.expr("""concat(year_gl,"0",month_gl)""")).otherwise(F.col('gl_period2')))
+        .withColumn('gl_period2', F.when(F.expr("""month_gl IN (10,11,12)"""), F.expr("""concat(year_gl,month_gl)""")).otherwise(F.col('gl_period2')))
         .withColumn('entity', F.col('entity_name'))
         .withColumn('SCHEME', F.expr("""concat(trim(scheme_id), '.', (trim(scheme_version )))"""))
     )
@@ -174,11 +176,11 @@ DATABASE_ALL_PL.write.mode('overwrite').saveAsTable('tia.DATABASE_ALL_PL')
 # Exlusion des schèmes de Ex-Macao
 import_01 = f"{lreseau}/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}/02_Elements_Techniques/TIA/Scheme Database/Input/SDB.xlsx"
 def import_excel(file, out, onglet):
-        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
-            .option('dataAddress', f'{onglet}!A1')
-            .option('header', 'true')
-            .load(file))
-        _df_tmp.createOrReplaceTempView(out)
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', f"'{onglet}'!A1")
+        .option('header', 'true')
+        .load(file))
+    _df_tmp.createOrReplaceTempView(f'{out}')
 
 
 import_excel(file=import_01, out="flag_legacy", onglet="flag_legacy")
@@ -207,8 +209,8 @@ import_excel(file=import_01, out="flag_legacy", onglet="flag_legacy")
 # RUN;
 DATABASE_ALL_PL_F = spark.table('tia.DATABASE_ALL_PL')
 DATABASE_ALL_PL_F = (DATABASE_ALL_PL_F
-    .withColumn('Agent_name', F.when(F.expr("""h.find() != 0"""), F.lit('')))
-    .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""h.find() != 0"""), F.lit('TIA')))
+    .withColumn('Agent_name', F.when(F.expr("""h.find() != 0"""), F.lit('')).otherwise(F.col('Agent_name')))
+    .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""h.find() != 0"""), F.lit('TIA')).otherwise(F.col('LEGACY_SCHEME_BOOK')))
 )
 # FORMAT/INFORMAT: format Data_Validated $1. RPP $14. Agent_ID $7. Agent_name $33. LEGACY_SCHEME_BOOK $5.
 # IF/THEN (manual review needed):
@@ -226,7 +228,7 @@ DATABASE_ALL_PL_F.write.mode('overwrite').saveAsTable('tia.DATABASE_ALL_PL_F')
 
 DATABASE_ALL_PL_F = spark.table('tia.DATABASE_ALL_PL_F')
 DATABASE_ALL_PL_F = (DATABASE_ALL_PL_F
-    .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Scheme = 'RCI.1' AND Country = 'IT'"""), F.lit('TIA')))
+    .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Scheme = 'RCI.1' AND Country = 'IT'"""), F.lit('TIA')).otherwise(F.col('LEGACY_SCHEME_BOOK')))
 )
 DATABASE_ALL_PL_F.createOrReplaceTempView('DATABASE_ALL_PL_F')
 # LIBNAME TIA -> base Spark: tia.DATABASE_ALL_PL_F
