@@ -28,20 +28,21 @@ def mef(country, pays):
     _null_ = spark.createDataFrame([], schema=StructType([]))
     _null_.createOrReplaceTempView('_null_')
 
-    _dfs[f'{country}_BLK'] = spark.sql(f"""SELECT COUNTRY_CD format=$2., POLICY_LINE_NO, PRODUCT format=$4. length=4, PRODUCT_VERSION format=$10., 
-    PRODUCT_LINE_VERSION, POLICY_NUMBER, COVER_CODE format=$5. length=5,
-    datepart(START_DATE) as start_date format=ddmmyy10., datepart(END_DATE) as end_date format=ddmmyy10., 
-    datepart(CANCEL_DATE) as cancel_date format=ddmmyy10., GL_TYPE format=$60., INSURANCE_TERM_MONTHS,
+    _dfs[f'{country}_BLK'] = spark.sql(f"""SELECT COUNTRY_CD , POLICY_LINE_NO, PRODUCT , PRODUCT_VERSION , 
+    PRODUCT_LINE_VERSION, POLICY_NUMBER, COVER_CODE ,
+    datepart(START_DATE) as start_date , datepart(END_DATE) as end_date , 
+    datepart(CANCEL_DATE) as cancel_date , GL_TYPE , INSURANCE_TERM_MONTHS,
     TAR, RENTAL, ADVANCE, OUTSTANDING_BALANCE, BALLOON, ADVISED_TOTAL_PREMIUM, ADVISED_GROSS_PREMIUM, 
     ADVISED_TOTAL_REFUND, ADVISED_GROSS_REFUND, PREMIUM, NON_PREMIUM,
     TOTAL_COMMISSION, PREMIUM_REFUND, NON_PREMIUM_REFUND, TOTAL_COMMISSION_CLAWBACK,
-    PRODUCT_LINE format=$2. length=2, CANCEL_CODE, 
-    datepart(LAST_REINSTATEMENT_DATE) as last_reinstatement_date format=ddmmyy10., 
-    LAST_TRANSACTION_TYPE  format=$10., OTHER, LAST_NON_ZERO_PREM,
-    GL_TYPE_NO, LEGACY_SCHEME_CODE format=$20. length=20, LEGACY_AGREEMENT_NUMBER format=$50. length=50, 
-    LEGACY_RENEWAL_NUMBER  format=$20. length=20 
+    PRODUCT_LINE , CANCEL_CODE, 
+    datepart(LAST_REINSTATEMENT_DATE) as last_reinstatement_date , 
+    LAST_TRANSACTION_TYPE , OTHER, LAST_NON_ZERO_PREM,
+    GL_TYPE_NO, LEGACY_SCHEME_CODE , LEGACY_AGREEMENT_NUMBER , 
+    LEGACY_RENEWAL_NUMBER  
     FROM {country}_BLK """)
     _dfs[f'{country}_BLK'].createOrReplaceTempView(f'{country}_BLK')
+    _dfs[f'{country}_BLK'].write.mode('overwrite').saveAsTable(f'pol_ext.{country}_BLK')
 
     _null_ = spark.createDataFrame([], schema=StructType([]))
     _null_.createOrReplaceTempView('_null_')
@@ -62,21 +63,22 @@ def mef(country, pays):
     _null_ = spark.createDataFrame([], schema=StructType([]))
     _null_.createOrReplaceTempView('_null_')
 
-    _dfs[f'{country}_MF'] = spark.sql(f"""SELECT COUNTRY_CD format=$2., POLICY_LINE_NO, PRODUCT format=$4. length=4, PRODUCT_VERSION format=$10., 
-    PRODUCT_LINE_VERSION, POLICY_NUMBER, COVER_CODE format=$5. length=5,
-    datepart(START_DATE) as start_date format=ddmmyy10., datepart(END_DATE) as end_date format=ddmmyy10., 
-    datepart(CANCEL_DATE) as cancel_date format=ddmmyy10., GL_TYPE format=$60., INSURANCE_TERM_MONTHS,
+    _dfs[f'{country}_MF'] = spark.sql(f"""SELECT COUNTRY_CD , POLICY_LINE_NO, PRODUCT , PRODUCT_VERSION , 
+    PRODUCT_LINE_VERSION, POLICY_NUMBER, COVER_CODE ,
+    datepart(START_DATE) as start_date , datepart(END_DATE) as end_date , 
+    datepart(CANCEL_DATE) as cancel_date , GL_TYPE , INSURANCE_TERM_MONTHS,
     TAR, RENTAL, ADVANCE, OUTSTANDING_BALANCE, BALLOON, ADVISED_TOTAL_PREMIUM, ADVISED_GROSS_PREMIUM, 
     ADVISED_TOTAL_REFUND, ADVISED_GROSS_REFUND, PREMIUM, NON_PREMIUM,
     TOTAL_COMMISSION, PREMIUM_REFUND, NON_PREMIUM_REFUND, TOTAL_COMMISSION_CLAWBACK,
-    PRODUCT_LINE format=$2. length=2, CANCEL_CODE, 
-    datepart(LAST_REINSTATEMENT_DATE) as last_reinstatement_date format=ddmmyy10., 
-    LAST_TRANSACTION_TYPE  format=$10., OTHER, LAST_NON_ZERO_PREM,
-    GL_TYPE_NO, LEGACY_SCHEME_CODE format=$20. length=20, LEGACY_AGREEMENT_NUMBER format=$50. length=50, 
-    LEGACY_RENEWAL_NUMBER  format=$20. length=20,
+    PRODUCT_LINE , CANCEL_CODE, 
+    datepart(LAST_REINSTATEMENT_DATE) as last_reinstatement_date , 
+    LAST_TRANSACTION_TYPE , OTHER, LAST_NON_ZERO_PREM,
+    GL_TYPE_NO, LEGACY_SCHEME_CODE , LEGACY_AGREEMENT_NUMBER , 
+    LEGACY_RENEWAL_NUMBER ,
     policy_transaction_date
     FROM POLICY.{pays}_pe_fixed_term_header_view""")
     _dfs[f'{country}_MF'].createOrReplaceTempView(f'{country}_MF')
+    _dfs[f'{country}_MF'].write.mode('overwrite').saveAsTable(f'pol_ext.{country}_MF')
 
     _null_ = spark.createDataFrame([], schema=StructType([]))
     _null_.createOrReplaceTempView('_null_')
