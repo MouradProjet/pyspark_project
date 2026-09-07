@@ -37,17 +37,17 @@ output1 = "CR_Q325"
 output2 = "CR_Q425"
 output3 = "CR_Q126"
 output4 = "CR_Q226"
-month1 = 08
-day1 = 29
+month1 = "08"
+day1 = "29"
 yr1 = 2025
-month2 = 12
-day2 = 26
+month2 = "12"
+day2 = "26"
 yr2 = 2025
-month3 = 03
-day3 = 27
+month3 = "03"
+day3 = "27"
 yr3 = 2026
-month4 = 06
-day4 = 26
+month4 = "06"
+day4 = "26"
 yr4 = 2026
 ym_sup1 = 202508
 ym_inf1 = 202408
@@ -58,11 +58,11 @@ ym_inf3 = 202503
 ym_sup4 = 202606
 ym_inf4 = 202506
 def import_excel(file, out, onglet):
-        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
-            .option('dataAddress', f'{onglet}!A1')
-            .option('header', 'true')
-            .load(file))
-        _df_tmp.createOrReplaceTempView(out)
+    _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+        .option('dataAddress', f"'{onglet}'!A1")
+        .option('header', 'true')
+        .load(file))
+    _df_tmp.createOrReplaceTempView(f'{out}')
 
 
 def biblio(output, quarter, nb):
@@ -79,7 +79,7 @@ def cover_import(nb):
 
     _dfs[f'Ref_Cover_{nb}'] = spark.table(f'Ref_Cover_{nb}')
     _dfs[f'Ref_Cover_{nb}'] = (_dfs[f'Ref_Cover_{nb}']
-        .withColumn('cover_name', F.when(F.expr("""covmd_cover_code ='DT'"""), F.lit('Disability')))
+        .withColumn('cover_name', F.when(F.expr("""covmd_cover_code ='DT'"""), F.lit('Disability')).otherwise(F.col('cover_name')))
     )
     _dfs[f'Ref_Cover_{nb}'].createOrReplaceTempView(f'Ref_Cover_{nb}')
 
@@ -94,7 +94,14 @@ import_02 = "~/NAS/X/08.Progammes/INTERNATIONAL/10_TABLE_ID/Table_ID.xlsx"
 import_excel(file=import_00, out="Mappings", onglet="Feuil1")
 import_excel(file=import_01, out="exchange", onglet="DALI Reel Exercice")
 import_excel(file=import_02, out="TABLEID", onglet="Table ID")
-codes_devises = spark.createDataFrame([], schema=StructType([]))
+codes_devises = spark.createDataFrame([
+    ("DE","EUR"),("AT","EUR"),("BE","EUR"),("BG","BGN"),("CY","EUR"),("HR","HRK"),
+    ("DK","DKK"),("ES","EUR"),("EE","EUR"),("FI","EUR"),("FR","EUR"),("GR","EUR"),
+    ("HU","HUF"),("IE","EUR"),("IT","EUR"),("LV","EUR"),("LT","EUR"),("LU","EUR"),
+    ("MT","EUR"),("CO","COP"),("UK","GBP"),("TR","TRY"),("NO","NOK"),("NI","NIO"),
+    ("NL","EUR"),("PL","PLN"),("PT","EUR"),("CZ","CZK"),("RO","RON"),("SK","EUR"),
+    ("SI","EUR"),("SE","SEK"),("CH","CHF"),("MX","MXN"),("CA","CAD"),
+], ["COUNTRY", "DEVISE"])
 codes_devises.createOrReplaceTempView('codes_devises')
 
 tauxdechange = spark.sql("""select a.COUNTRY, a.devise, b.YTD_VALUE
@@ -110,10 +117,12 @@ def reserves_summary(output, quarter, yr, month, day, nb, vision):
     _dfs[f'wps_daap_case_reserves_{vision}'] = spark.table(f'{output}.wps_daap_case_reserves_{yr}{month}{day}')
     _dfs[f'wps_daap_case_reserves_{vision}'] = (_dfs[f'wps_daap_case_reserves_{vision}']
         .withColumn('Year', F.expr("""year(Incident_date)"""))
-        .withColumn('quarter', F.when(F.expr("""month(Incident_date) IN (1, 2, 3)"""), F.expr("""concat(Year, 'Q1')""")))
-        .withColumn('quarter', F.when(F.expr("""month(Incident_date) IN (4, 5, 6)"""), F.expr("""concat(Year, 'Q2')""")))
-        .withColumn('quarter', F.when(F.expr("""month(Incident_date) IN (7, 8, 9)"""), F.expr("""concat(Year, 'Q3')""")))
-        .withColumn('quarter', F.when(F.expr("""month(Incident_date) IN (10, 11, 12)"""), F.expr("""concat(Year, 'Q4')""")))
+        .withColumn('quarter',
+        F.when(F.expr("""month(Incident_date) IN (1, 2, 3)"""), F.expr("""concat(Year, 'Q1')"""))
+         .when(F.expr("""month(Incident_date) IN (4, 5, 6)"""), F.expr("""concat(Year, 'Q2')"""))
+         .when(F.expr("""month(Incident_date) IN (7, 8, 9)"""), F.expr("""concat(Year, 'Q3')"""))
+         .when(F.expr("""month(Incident_date) IN (10, 11, 12)"""), F.expr("""concat(Year, 'Q4')"""))
+         .otherwise(F.col('quarter')))
     )
     _dfs[f'wps_daap_case_reserves_{vision}'].createOrReplaceTempView(f'wps_daap_case_reserves_{vision}')
 
@@ -127,8 +136,10 @@ def reserves_summary(output, quarter, yr, month, day, nb, vision):
 
     _dfs[f'wps_daap_case_reserves_{vision}'] = spark.table(f'wps_daap_case_reserves_{vision}')
     _dfs[f'wps_daap_case_reserves_{vision}'] = (_dfs[f'wps_daap_case_reserves_{vision}']
-        .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO')))
-        .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao IN ('TIA','')"""), F.lit('TIA')))
+        .withColumn('LEGACY_SCHEME_BOOK',
+        F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO'))
+         .when(F.expr("""Flag_Macao IN ('TIA', '')"""), F.lit('TIA'))
+         .otherwise(F.col('LEGACY_SCHEME_BOOK')))
     )
     _dfs[f'wps_daap_case_reserves_{vision}'].createOrReplaceTempView(f'wps_daap_case_reserves_{vision}')
 
@@ -152,8 +163,10 @@ def reserves_summary(output, quarter, yr, month, day, nb, vision):
 
     _dfs[f'CR_IBNR_{vision}'] = spark.table(f'CR_IBNR_{vision}')
     _dfs[f'CR_IBNR_{vision}'] = (_dfs[f'CR_IBNR_{vision}']
-        .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO')))
-        .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao IN ('TIA','')"""), F.lit('TIA')))
+        .withColumn('LEGACY_SCHEME_BOOK',
+        F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO'))
+         .when(F.expr("""Flag_Macao IN ('TIA', '')"""), F.lit('TIA'))
+         .otherwise(F.col('LEGACY_SCHEME_BOOK')))
     )
     _dfs[f'CR_IBNR_{vision}'].createOrReplaceTempView(f'CR_IBNR_{vision}')
 
@@ -205,29 +218,31 @@ def reserves_summary(output, quarter, yr, month, day, nb, vision):
     _dfs[f'CR_{country}'].createOrReplaceTempView(f'CR_{country}')
 
     # IBNR
-    if {quarter}=2025_04_V2 and {country}=GR:
-        PROC IMPORT 
-    DATAFILE="~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/2025_04_V2/02_Elements_Techniques/TIA/Arrete reel/RESERVES/REPORTING/Datalake/GR/WPS_DAAP_IBNR_20250328_GR.xlsx"
-    OUT=GR_IBNR_IMPOR
-    DBMS=XLSX
-    REPLACE;
-    RUN;
-    DATA CR_IBNR_&Country.;
-    SET GR_IBNR_IMPOR;
-    WHERE Country="&Country.";
-    Year = input(substr(Incident_Quarter,1,4), 4.);
-    GL_TYPE_NO = input(Entity_CD, best.);
-    KEEP Country SCHEME cover Year quarter GL_TYPE_NO Entity Rsrv_Typ Rsrv_Amt_Gross;
-    RUN;
-    # %DO block (non-iterative): %do; 
-    data CR_IBNR_&Country.;
-    KEEP Country SCHEME cover Year quarter GL_TYPE_NO Entity Rsrv_Typ Rsrv_Amt_Gross  ;
-    set CR_IBNR_&vision. ;
-    where Country="&Country." ;
-    Year=substr(Incident_Quarter,1,4)*1; 
-    GL_TYPE_NO= Entity_CD*1 ;
-    run ;
-    %end;
+    if quarter== '2025_04_V2'  and  country== 'GR':
+        _df_tmp = (spark.read.format('com.crealytics.spark.excel')
+            .option('dataAddress', "'0'!A1")
+            .option('header', 'true')
+            .load("~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire"))
+        _df_tmp.createOrReplaceTempView('GR_IBNR_IMPOR')
+    
+        _dfs[f'CR_IBNR_{country}'] = spark.table('GR_IBNR_IMPOR')
+        _dfs[f'CR_IBNR_{country}'] = _dfs[f'CR_IBNR_{country}'].filter(F.col('Country') == f"{country}")
+        _dfs[f'CR_IBNR_{country}'] = (_dfs[f'CR_IBNR_{country}']
+            .withColumn('Year', F.expr("""cast(substring(Incident_Quarter,1,4) as double)"""))
+            .withColumn('GL_TYPE_NO', F.col('Entity_CD').cast('long'))
+        )
+        _dfs[f'CR_IBNR_{country}'] = _dfs[f'CR_IBNR_{country}'].select('Country', 'SCHEME', 'cover', 'Year', 'quarter', 'GL_TYPE_NO', 'Entity', 'Rsrv_Typ', 'Rsrv_Amt_Gross')
+        _dfs[f'CR_IBNR_{country}'].createOrReplaceTempView(f'CR_IBNR_{country}')
+    
+        _dfs[f'CR_IBNR_{country}'] = spark.table(f'CR_IBNR_{vision}')
+        _dfs[f'CR_IBNR_{country}'] = _dfs[f'CR_IBNR_{country}'].filter(F.col('Country') == f"{country}")
+        _dfs[f'CR_IBNR_{country}'] = (_dfs[f'CR_IBNR_{country}']
+            .withColumn('Year', F.expr("""substring(Incident_Quarter,1,4)*1"""))
+            .withColumn('GL_TYPE_NO', F.expr("""Entity_CD*1"""))
+        )
+        _dfs[f'CR_IBNR_{country}'] = _dfs[f'CR_IBNR_{country}'].select('Country', 'SCHEME', 'cover', 'Year', 'quarter', 'GL_TYPE_NO', 'Entity', 'Rsrv_Typ', 'Rsrv_Amt_Gross')
+        _dfs[f'CR_IBNR_{country}'].createOrReplaceTempView(f'CR_IBNR_{country}')
+    
     _dfs[f'CR_RESERVES_{country}'] = spark.table(f'CR_{country}').unionByName(spark.table(f'CR_IBNR_{country}'), allowMissingColumns=True)
     _dfs[f'CR_RESERVES_{country}'].createOrReplaceTempView(f'CR_RESERVES_{country}')
 
@@ -256,15 +271,17 @@ def reserves_summary(output, quarter, yr, month, day, nb, vision):
 
     _dfs[f'Reserve_Flux_{country}_{nb}'] = spark.table(f'Reserve_Flux_{country}')
     _dfs[f'Reserve_Flux_{country}_{nb}'] = (_dfs[f'Reserve_Flux_{country}_{nb}']
-        .withColumn('PAID', F.when(F.expr("""PAID IS NULL"""), F.lit(0)))
-        .withColumn('IBNR', F.when(F.expr("""IBNR IS NULL"""), F.lit(0)))
-        .withColumn('ICOP', F.when(F.expr("""ICOP IS NULL"""), F.lit(0)))
-        .withColumn('RBNP', F.when(F.expr("""RBNP IS NULL"""), F.lit(0)))
+        .withColumn('PAID', F.when(F.expr("""PAID IS NULL"""), F.lit(0)).otherwise(F.col('PAID')))
+        .withColumn('IBNR', F.when(F.expr("""IBNR IS NULL"""), F.lit(0)).otherwise(F.col('IBNR')))
+        .withColumn('ICOP', F.when(F.expr("""ICOP IS NULL"""), F.lit(0)).otherwise(F.col('ICOP')))
+        .withColumn('RBNP', F.when(F.expr("""RBNP IS NULL"""), F.lit(0)).otherwise(F.col('RBNP')))
         .withColumn('Charge_clot', F.expr("""PAID + IBNR + ICOP + RBNP"""))
-        .withColumn('cover_name', F.when(F.expr("""cover IN ('DU','ZH','DZ','DY')"""), F.lit('Disability')))
-        .withColumn('cover_name', F.when(F.expr("""cover IN ('TR','TS')"""), F.lit('Pecuniary Loss')))
-        .withColumn('cover_name', F.when(F.expr("""cover IN ('RV')"""), F.lit('Unemployment')))
-        .withColumn('cover_name', F.when(F.expr("""cover IN ('FF')"""), F.lit('Death')))
+        .withColumn('cover_name',
+        F.when(F.expr("""cover IN ('DU', 'ZH','DZ','DY')"""), F.lit('Disability'))
+         .when(F.expr("""cover IN ('TR', 'TS')"""), F.lit('Pecuniary Loss'))
+         .when(F.expr("""cover IN ('RV')"""), F.lit('Unemployment'))
+         .when(F.expr("""cover IN ('FF')"""), F.lit('Death'))
+         .otherwise(F.col('cover_name')))
     )
     _dfs[f'Reserve_Flux_{country}_{nb}'] = _dfs[f'Reserve_Flux_{country}_{nb}'].drop('POSTE')
     _dfs[f'Reserve_Flux_{country}_{nb}'].createOrReplaceTempView(f'Reserve_Flux_{country}_{nb}')
@@ -339,47 +356,27 @@ FLUX_ALL_QUARTERS = spark.sql(f"""select
         and a.Entity=d.Entity""")
 FLUX_ALL_QUARTERS.createOrReplaceTempView('FLUX_ALL_QUARTERS')
 
-FLUX_ALL_QUARTERS = spark.table('FLUX_ALL_QUARTERS')
-# IF/THEN (manual review needed):
-#   if PAID_{vision1} = . then PAID_{vision1} = 0 ;
-# IF/THEN (manual review needed):
-#   if PAID_{vision2} = . then PAID_{vision2} = 0 ;
-# IF/THEN (manual review needed):
-#   if PAID_{vision3} = . then PAID_{vision3} = 0 ;
-# IF/THEN (manual review needed):
-#   if PAID_{vision4} = . then PAID_{vision4} = 0 ;
-# IF/THEN (manual review needed):
-#   if ICOP_{vision1} = . then ICOP_{vision1} = 0 ;
-# IF/THEN (manual review needed):
-#   if ICOP_{vision2} = . then ICOP_{vision2} = 0 ;
-# IF/THEN (manual review needed):
-#   if ICOP_{vision3} = . then ICOP_{vision3} = 0 ;
-# IF/THEN (manual review needed):
-#   if ICOP_{vision4} = . then ICOP_{vision4} = 0 ;
-# IF/THEN (manual review needed):
-#   if RBNP_{vision1} = . then RBNP_{vision1} = 0 ;
-# IF/THEN (manual review needed):
-#   if RBNP_{vision2} = . then RBNP_{vision2} = 0 ;
-# IF/THEN (manual review needed):
-#   if RBNP_{vision3} = . then RBNP_{vision3} = 0 ;
-# IF/THEN (manual review needed):
-#   if RBNP_{vision4} = . then RBNP_{vision4} = 0 ;
-# IF/THEN (manual review needed):
-#   if IBNR_{vision1} = . then IBNR_{vision1} = 0 ;
-# IF/THEN (manual review needed):
-#   if IBNR_{vision2} = . then IBNR_{vision2} = 0 ;
-# IF/THEN (manual review needed):
-#   if IBNR_{vision3} = . then IBNR_{vision3} = 0 ;
-# IF/THEN (manual review needed):
-#   if IBNR_{vision4} = . then IBNR_{vision4} = 0 ;
-# IF/THEN (manual review needed):
-#   if Charge_clot_{vision1} = . then Charge_clot_{vision1} = 0 ;
-# IF/THEN (manual review needed):
-#   if Charge_clot_{vision2} = . then Charge_clot_{vision2} = 0 ;
-# IF/THEN (manual review needed):
-#   if Charge_clot_{vision3} = . then Charge_clot_{vision3} = 0 ;
-# IF/THEN (manual review needed):
-#   if Charge_clot_{vision4} = . then Charge_clot_{vision4} = 0 ;
+FLUX_ALL_QUARTERS = (spark.table('FLUX_ALL_QUARTERS')
+    .withColumn(f'PAID_{vision1}', F.coalesce(F.col(f'PAID_{vision1}'), F.lit(0)))
+    .withColumn(f'PAID_{vision2}', F.coalesce(F.col(f'PAID_{vision2}'), F.lit(0)))
+    .withColumn(f'PAID_{vision3}', F.coalesce(F.col(f'PAID_{vision3}'), F.lit(0)))
+    .withColumn(f'PAID_{vision4}', F.coalesce(F.col(f'PAID_{vision4}'), F.lit(0)))
+    .withColumn(f'ICOP_{vision1}', F.coalesce(F.col(f'ICOP_{vision1}'), F.lit(0)))
+    .withColumn(f'ICOP_{vision2}', F.coalesce(F.col(f'ICOP_{vision2}'), F.lit(0)))
+    .withColumn(f'ICOP_{vision3}', F.coalesce(F.col(f'ICOP_{vision3}'), F.lit(0)))
+    .withColumn(f'ICOP_{vision4}', F.coalesce(F.col(f'ICOP_{vision4}'), F.lit(0)))
+    .withColumn(f'RBNP_{vision1}', F.coalesce(F.col(f'RBNP_{vision1}'), F.lit(0)))
+    .withColumn(f'RBNP_{vision2}', F.coalesce(F.col(f'RBNP_{vision2}'), F.lit(0)))
+    .withColumn(f'RBNP_{vision3}', F.coalesce(F.col(f'RBNP_{vision3}'), F.lit(0)))
+    .withColumn(f'RBNP_{vision4}', F.coalesce(F.col(f'RBNP_{vision4}'), F.lit(0)))
+    .withColumn(f'IBNR_{vision1}', F.coalesce(F.col(f'IBNR_{vision1}'), F.lit(0)))
+    .withColumn(f'IBNR_{vision2}', F.coalesce(F.col(f'IBNR_{vision2}'), F.lit(0)))
+    .withColumn(f'IBNR_{vision3}', F.coalesce(F.col(f'IBNR_{vision3}'), F.lit(0)))
+    .withColumn(f'IBNR_{vision4}', F.coalesce(F.col(f'IBNR_{vision4}'), F.lit(0)))
+    .withColumn(f'Charge_clot_{vision1}', F.coalesce(F.col(f'Charge_clot_{vision1}'), F.lit(0)))
+    .withColumn(f'Charge_clot_{vision2}', F.coalesce(F.col(f'Charge_clot_{vision2}'), F.lit(0)))
+    .withColumn(f'Charge_clot_{vision3}', F.coalesce(F.col(f'Charge_clot_{vision3}'), F.lit(0)))
+    .withColumn(f'Charge_clot_{vision4}', F.coalesce(F.col(f'Charge_clot_{vision4}'), F.lit(0))))
 FLUX_ALL_QUARTERS.createOrReplaceTempView('FLUX_ALL_QUARTERS')
 
 FLUX_ALL_QUARTERS = spark.sql("""select a.*, b.YTD_VALUE
@@ -425,10 +422,12 @@ def accounting_payment(nb, q, quarter, vision):
     _dfs[f'{country}_clmhdr'] = (_dfs[f'{country}_clmhdr']
         .withColumn('Occurence_month', F.expr("""month(incident_date)"""))
         .withColumn('Occurence_year', F.expr("""year(incident_date)"""))
-        .withColumn('quarter_occurrence', F.when(F.expr("""Occurence_month IN (1,2,3)"""), F.expr("""concat(Occurence_year, 'Q1')""")))
-        .withColumn('quarter_occurrence', F.when(F.expr("""Occurence_month IN (4,5,6)"""), F.expr("""concat(Occurence_year, 'Q2')""")))
-        .withColumn('quarter_occurrence', F.when(F.expr("""Occurence_month IN (7,8,9)"""), F.expr("""concat(Occurence_year, 'Q3')""")))
-        .withColumn('quarter_occurrence', F.when(F.expr("""Occurence_month IN (10,11,12)"""), F.expr("""concat(Occurence_year, 'Q4')""")))
+        .withColumn('quarter_occurrence',
+        F.when(F.expr("""Occurence_month IN (1, 2,3)"""), F.expr("""concat(Occurence_year, 'Q1')"""))
+         .when(F.expr("""Occurence_month IN (4, 5,6)"""), F.expr("""concat(Occurence_year, 'Q2')"""))
+         .when(F.expr("""Occurence_month IN (7, 8,9)"""), F.expr("""concat(Occurence_year, 'Q3')"""))
+         .when(F.expr("""Occurence_month IN (10, 11,12)"""), F.expr("""concat(Occurence_year, 'Q4')"""))
+         .otherwise(F.col('quarter_occurrence')))
     )
     _dfs[f'{country}_clmhdr'].createOrReplaceTempView(f'{country}_clmhdr')
 
@@ -443,10 +442,12 @@ def accounting_payment(nb, q, quarter, vision):
         .withColumn('Transaction_year', F.expr("""year(TRANS_DATE)"""))
         .withColumn('gross_amt', F.expr("""-gross_amt"""))
         .withColumn('currency_amt', F.expr("""-currency_amt"""))
-        .withColumn('quarter_transaction', F.when(F.expr("""Transaction_month IN (1,2,3)"""), F.expr("""concat(Transaction_year, 'Q1')""")))
-        .withColumn('quarter_transaction', F.when(F.expr("""Transaction_month IN (4,5,6)"""), F.expr("""concat(Transaction_year, 'Q2')""")))
-        .withColumn('quarter_transaction', F.when(F.expr("""Transaction_month IN (7,8,9)"""), F.expr("""concat(Transaction_year, 'Q3')""")))
-        .withColumn('quarter_transaction', F.when(F.expr("""Transaction_month IN (10,11,12)"""), F.expr("""concat(Transaction_year, 'Q4')""")))
+        .withColumn('quarter_transaction',
+        F.when(F.expr("""Transaction_month IN (1, 2,3)"""), F.expr("""concat(Transaction_year, 'Q1')"""))
+         .when(F.expr("""Transaction_month IN (4, 5,6)"""), F.expr("""concat(Transaction_year, 'Q2')"""))
+         .when(F.expr("""Transaction_month IN (7, 8,9)"""), F.expr("""concat(Transaction_year, 'Q3')"""))
+         .when(F.expr("""Transaction_month IN (10, 11,12)"""), F.expr("""concat(Transaction_year, 'Q4')"""))
+         .otherwise(F.col('quarter_transaction')))
     )
     _dfs[f'{country}_clmtrns'].createOrReplaceTempView(f'{country}_clmtrns')
 
@@ -462,8 +463,8 @@ def accounting_payment(nb, q, quarter, vision):
     _dfs[f'{country}_final_clmhdr'].createOrReplaceTempView(f'{country}_final_clmhdr')
 
     _dfs[f'{country}_final_clmhdr'] = spark.table(f'{country}_final_clmhdr')
-    # IF/THEN (manual review needed):
-    #   IF NOT MISSING(Claim_paid) THEN OUTPUT ;
+    # IF NOT MISSING(Claim_paid) THEN OUTPUT → garder les lignes non-nulles
+    _dfs[f'{country}_final_clmhdr'] = _dfs[f'{country}_final_clmhdr'].filter(F.col('Claim_paid').isNotNull())
     _dfs[f'{country}_final_clmhdr'].createOrReplaceTempView(f'{country}_final_clmhdr')
 
     _dfs[f'{country}_final_clmhdr'] = spark.sql(f"""Select distinct a.*,b.partner_sales_name as Agent_name,c.cover_name 
@@ -474,16 +475,18 @@ def accounting_payment(nb, q, quarter, vision):
 
     _dfs[f'{country}_final_clmhdr'] = spark.table(f'{country}_final_clmhdr')
     _dfs[f'{country}_final_clmhdr'] = (_dfs[f'{country}_final_clmhdr']
-        .withColumn('cover_name', F.when(F.expr("""cover IN ('DU','ZH','DZ','DY')"""), F.lit('Disability')))
-        .withColumn('cover_name', F.when(F.expr("""cover IN ('TR','TS')"""), F.lit('Pecuniary Loss')))
-        .withColumn('cover_name', F.when(F.expr("""cover IN ('RV')"""), F.lit('Unemployment')))
-        .withColumn('cover_name', F.when(F.expr("""cover IN ('FF')"""), F.lit('Death')))
+        .withColumn('cover_name',
+        F.when(F.expr("""cover IN ('DU', 'ZH','DZ','DY')"""), F.lit('Disability'))
+         .when(F.expr("""cover IN ('TR', 'TS')"""), F.lit('Pecuniary Loss'))
+         .when(F.expr("""cover IN ('RV')"""), F.lit('Unemployment'))
+         .when(F.expr("""cover IN ('FF')"""), F.lit('Death'))
+         .otherwise(F.col('cover_name')))
     )
     _dfs[f'{country}_final_clmhdr'].createOrReplaceTempView(f'{country}_final_clmhdr')
 
     _dfs[f'{country}_final_clmhdr'] = spark.table(f'{country}_final_clmhdr')
-    # IF/THEN (manual review needed):
-    #   if quarter_transaction="{q}" ;
+    # subsetting IF → filter: garder quarter_transaction='{q}'
+    _dfs[f'{country}_final_clmhdr'] = _dfs[f'{country}_final_clmhdr'].filter(f"""quarter_transaction='{q}'""")
     _dfs[f'{country}_final_clmhdr'].createOrReplaceTempView(f'{country}_final_clmhdr')
 
     _dfs[f'{country}_final_clmhdr'] = spark.sql(f"""select distinct
@@ -496,8 +499,10 @@ def accounting_payment(nb, q, quarter, vision):
 
     _dfs[f'{country}_final_clmhdr'] = spark.table(f'{country}_final_clmhdr')
     _dfs[f'{country}_final_clmhdr'] = (_dfs[f'{country}_final_clmhdr']
-        .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO')))
-        .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao IN ('TIA','')"""), F.lit('TIA')))
+        .withColumn('LEGACY_SCHEME_BOOK',
+        F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO'))
+         .when(F.expr("""Flag_Macao IN ('TIA', '')"""), F.lit('TIA'))
+         .otherwise(F.col('LEGACY_SCHEME_BOOK')))
     )
     _dfs[f'{country}_final_clmhdr'].createOrReplaceTempView(f'{country}_final_clmhdr')
 
@@ -588,15 +593,11 @@ CLAIMS_PAID_ALL_QUARTERS = spark.sql(f"""select
         and a.Entity=d.Entity""")
 CLAIMS_PAID_ALL_QUARTERS.createOrReplaceTempView('CLAIMS_PAID_ALL_QUARTERS')
 
-CLAIMS_PAID_ALL_QUARTERS = spark.table('CLAIMS_PAID_ALL_QUARTERS')
-# IF/THEN (manual review needed):
-#   if Claim_paid_{vision1} = . then Claim_paid_{vision1} = 0 ;
-# IF/THEN (manual review needed):
-#   if Claim_paid_{vision2} = . then Claim_paid_{vision2} = 0 ;
-# IF/THEN (manual review needed):
-#   if Claim_paid_{vision3} = . then Claim_paid_{vision3} = 0 ;
-# IF/THEN (manual review needed):
-#   if Claim_paid_{vision4} = . then Claim_paid_{vision4} = 0 ;
+CLAIMS_PAID_ALL_QUARTERS = (spark.table('CLAIMS_PAID_ALL_QUARTERS')
+    .withColumn(f'Claim_paid_{vision1}', F.coalesce(F.col(f'Claim_paid_{vision1}'), F.lit(0)))
+    .withColumn(f'Claim_paid_{vision2}', F.coalesce(F.col(f'Claim_paid_{vision2}'), F.lit(0)))
+    .withColumn(f'Claim_paid_{vision3}', F.coalesce(F.col(f'Claim_paid_{vision3}'), F.lit(0)))
+    .withColumn(f'Claim_paid_{vision4}', F.coalesce(F.col(f'Claim_paid_{vision4}'), F.lit(0))))
 CLAIMS_PAID_ALL_QUARTERS.createOrReplaceTempView('CLAIMS_PAID_ALL_QUARTERS')
 
 CLAIMS_PAID_ALL_QUARTERS = spark.sql("""select a.*, b.YTD_VALUE
@@ -701,8 +702,8 @@ def regroupement(quarter, nb):
     _dfs[f'CLMHDR_{quarter}_all'].createOrReplaceTempView(f'CLMHDR_{quarter}_all')
 
     _dfs[f'CLMHDR_{quarter}_all'] = spark.table(f'CLMHDR_{quarter}_all')
-    # IF/THEN (manual review needed):
-    #   IF Rsrv_Typ in ("ICOP","RBNP") ;
+    # subsetting IF → filter: garder Rsrv_Typ in ('ICOP','RBNP')
+    _dfs[f'CLMHDR_{quarter}_all'] = _dfs[f'CLMHDR_{quarter}_all'].filter("""Rsrv_Typ in ('ICOP','RBNP')""")
     _dfs[f'CLMHDR_{quarter}_all'].createOrReplaceTempView(f'CLMHDR_{quarter}_all')
 
     _dfs[f'CLMHDR_{quarter}_all'] = spark.sql(f"""select distinct
@@ -715,8 +716,10 @@ def regroupement(quarter, nb):
 
     _dfs[f'CLMHDR_{quarter}_all'] = spark.table(f'CLMHDR_{quarter}_all')
     _dfs[f'CLMHDR_{quarter}_all'] = (_dfs[f'CLMHDR_{quarter}_all']
-        .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO')))
-        .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao IN ('TIA','')"""), F.lit('TIA')))
+        .withColumn('LEGACY_SCHEME_BOOK',
+        F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO'))
+         .when(F.expr("""Flag_Macao IN ('TIA', '')"""), F.lit('TIA'))
+         .otherwise(F.col('LEGACY_SCHEME_BOOK')))
     )
     _dfs[f'CLMHDR_{quarter}_all'].createOrReplaceTempView(f'CLMHDR_{quarter}_all')
 
@@ -725,8 +728,8 @@ def regroupement(quarter, nb):
     _dfs[f'CLMHDR_{quarter}_all'].createOrReplaceTempView(f'CLMHDR_{quarter}_all')
 
     _dfs[f'CLMHDR_{quarter}_all'] = spark.table(f'CLMHDR_{quarter}_all')
-    # IF/THEN (manual review needed):
-    #   IF LEGACY_SCHEME_BOOK="TIA" ;
+    # subsetting IF → filter: garder LEGACY_SCHEME_BOOK='TIA'
+    _dfs[f'CLMHDR_{quarter}_all'] = _dfs[f'CLMHDR_{quarter}_all'].filter("""LEGACY_SCHEME_BOOK='TIA'""")
     _dfs[f'CLMHDR_{quarter}_all'].createOrReplaceTempView(f'CLMHDR_{quarter}_all')
 
     _dfs[f'CLMHDR_{quarter}_all'] = spark.table(f'CLMHDR_{quarter}_all')
@@ -742,8 +745,8 @@ _dfs[f'CLMHDR_{quarter1}_all'] = reduce(lambda a, b: a.unionByName(b, allowMissi
 _dfs[f'CLMHDR_{quarter1}_all'].createOrReplaceTempView(f'CLMHDR_{quarter1}_all')
 
 _dfs[f'CLMHDR_{quarter1}_all'] = spark.table(f'CLMHDR_{quarter1}_all')
-# IF/THEN (manual review needed):
-#   IF Rsrv_Typ in ("ICOP","RBNP") ;
+# subsetting IF → filter: garder Rsrv_Typ in ('ICOP','RBNP')
+_dfs[f'CLMHDR_{quarter1}_all'] = _dfs[f'CLMHDR_{quarter1}_all'].filter("""Rsrv_Typ in ('ICOP','RBNP')""")
 _dfs[f'CLMHDR_{quarter1}_all'].createOrReplaceTempView(f'CLMHDR_{quarter1}_all')
 
 _dfs[f'CLMHDR_{quarter1}_all'] = spark.sql(f"""select distinct
@@ -756,8 +759,10 @@ _dfs[f'CLMHDR_{quarter1}_all'].createOrReplaceTempView(f'CLMHDR_{quarter1}_all')
 
 _dfs[f'CLMHDR_{quarter1}_all'] = spark.table(f'CLMHDR_{quarter1}_all')
 _dfs[f'CLMHDR_{quarter1}_all'] = (_dfs[f'CLMHDR_{quarter1}_all']
-    .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO')))
-    .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao IN ('TIA','')"""), F.lit('TIA')))
+    .withColumn('LEGACY_SCHEME_BOOK',
+    F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO'))
+     .when(F.expr("""Flag_Macao IN ('TIA', '')"""), F.lit('TIA'))
+     .otherwise(F.col('LEGACY_SCHEME_BOOK')))
 )
 _dfs[f'CLMHDR_{quarter1}_all'].createOrReplaceTempView(f'CLMHDR_{quarter1}_all')
 
@@ -766,8 +771,8 @@ _dfs[f'CLMHDR_{quarter1}_all'] = _dfs[f'CLMHDR_{quarter1}_all'].drop('RPP', 'Fla
 _dfs[f'CLMHDR_{quarter1}_all'].createOrReplaceTempView(f'CLMHDR_{quarter1}_all')
 
 _dfs[f'CLMHDR_{quarter1}_all'] = spark.table(f'CLMHDR_{quarter1}_all')
-# IF/THEN (manual review needed):
-#   IF LEGACY_SCHEME_BOOK="TIA" ;
+# subsetting IF → filter: garder LEGACY_SCHEME_BOOK='TIA'
+_dfs[f'CLMHDR_{quarter1}_all'] = _dfs[f'CLMHDR_{quarter1}_all'].filter("""LEGACY_SCHEME_BOOK='TIA'""")
 _dfs[f'CLMHDR_{quarter1}_all'].createOrReplaceTempView(f'CLMHDR_{quarter1}_all')
 
 _dfs[f'CLMHDR_{quarter1}_all'] = spark.table(f'CLMHDR_{quarter1}_all')
@@ -783,10 +788,12 @@ def partner_added(quarter, nb):
 
     _dfs[f'CLMHDR_{quarter}_all'] = spark.table(f'CLMHDR_{quarter}_all')
     _dfs[f'CLMHDR_{quarter}_all'] = (_dfs[f'CLMHDR_{quarter}_all']
-        .withColumn('cover_name', F.when(F.expr("""Cvr_Typ IN ('DU','ZH','DZ','DY')"""), F.lit('Disability')))
-        .withColumn('cover_name', F.when(F.expr("""Cvr_Typ IN ('TR','TS')"""), F.lit('Pecuniary Loss')))
-        .withColumn('cover_name', F.when(F.expr("""Cvr_Typ IN ('RV')"""), F.lit('Unemployment')))
-        .withColumn('cover_name', F.when(F.expr("""Cvr_Typ IN ('FF')"""), F.lit('Death')))
+        .withColumn('cover_name',
+        F.when(F.expr("""Cvr_Typ IN ('DU', 'ZH','DZ','DY')"""), F.lit('Disability'))
+         .when(F.expr("""Cvr_Typ IN ('TR', 'TS')"""), F.lit('Pecuniary Loss'))
+         .when(F.expr("""Cvr_Typ IN ('RV')"""), F.lit('Unemployment'))
+         .when(F.expr("""Cvr_Typ IN ('FF')"""), F.lit('Death'))
+         .otherwise(F.col('cover_name')))
     )
     _dfs[f'CLMHDR_{quarter}_all'].createOrReplaceTempView(f'CLMHDR_{quarter}_all')
 
@@ -830,8 +837,10 @@ def recuperation_gep(quarter, nb, ym_sup, ym_inf, vision):
 
     _dfs[f'GEP_FLUX_{quarter}_all'] = spark.table(f'GEP_FLUX_{quarter}_all')
     _dfs[f'GEP_FLUX_{quarter}_all'] = (_dfs[f'GEP_FLUX_{quarter}_all']
-        .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO')))
-        .withColumn('LEGACY_SCHEME_BOOK', F.when(F.expr("""Flag_Macao IN ('TIA','')"""), F.lit('TIA')))
+        .withColumn('LEGACY_SCHEME_BOOK',
+        F.when(F.expr("""Flag_Macao='MACAO'"""), F.lit('MACAO'))
+         .when(F.expr("""Flag_Macao IN ('TIA', '')"""), F.lit('TIA'))
+         .otherwise(F.col('LEGACY_SCHEME_BOOK')))
     )
     _dfs[f'GEP_FLUX_{quarter}_all'].createOrReplaceTempView(f'GEP_FLUX_{quarter}_all')
 
@@ -858,10 +867,12 @@ def recuperation_gep(quarter, nb, ym_sup, ym_inf, vision):
 
     _dfs[f'GEP_FLUX_{quarter}_all'] = spark.table(f'GEP_FLUX_{quarter}_all')
     _dfs[f'GEP_FLUX_{quarter}_all'] = (_dfs[f'GEP_FLUX_{quarter}_all']
-        .withColumn('cover_name', F.when(F.expr("""Cover IN ('DU','ZH','DZ','DY')"""), F.lit('Disability')))
-        .withColumn('cover_name', F.when(F.expr("""Cover IN ('TR','TS')"""), F.lit('Pecuniary Loss')))
-        .withColumn('cover_name', F.when(F.expr("""Cover IN ('RV')"""), F.lit('Unemployment')))
-        .withColumn('cover_name', F.when(F.expr("""Cover IN ('FF')"""), F.lit('Death')))
+        .withColumn('cover_name',
+        F.when(F.expr("""Cover IN ('DU', 'ZH','DZ','DY')"""), F.lit('Disability'))
+         .when(F.expr("""Cover IN ('TR', 'TS')"""), F.lit('Pecuniary Loss'))
+         .when(F.expr("""Cover IN ('RV')"""), F.lit('Unemployment'))
+         .when(F.expr("""Cover IN ('FF')"""), F.lit('Death'))
+         .otherwise(F.col('cover_name')))
     )
     _dfs[f'GEP_FLUX_{quarter}_all'].createOrReplaceTempView(f'GEP_FLUX_{quarter}_all')
 
@@ -906,31 +917,19 @@ GEP_FLUX_ALL_QUARTERS = spark.sql(f"""select
         and a.Quarter=d.Quarter and a.Month=d.Month and a.Agent=d.Agent and a.Agent_Name = d.Agent_Name and a.Entity_CD=d.Entity_CD and a.RPP=d.RPP and a.Product=d.Product""")
 GEP_FLUX_ALL_QUARTERS.createOrReplaceTempView('GEP_FLUX_ALL_QUARTERS')
 
-GEP_FLUX_ALL_QUARTERS = spark.table('GEP_FLUX_ALL_QUARTERS')
-# IF/THEN (manual review needed):
-#   if Claim_paid_{vision1} = . then Claim_paid_{vision1} = 0 ;
-# IF/THEN (manual review needed):
-#   if Claim_paid_{vision2} = . then Claim_paid_{vision2} = 0 ;
-# IF/THEN (manual review needed):
-#   if Claim_paid_{vision3} = . then Claim_paid_{vision3} = 0 ;
-# IF/THEN (manual review needed):
-#   if Claim_paid_{vision4} = . then Claim_paid_{vision4} = 0 ;
-# IF/THEN (manual review needed):
-#   if GEP_{vision1} = . then GEP_{vision1} = 0 ;
-# IF/THEN (manual review needed):
-#   if GEP_{vision2} = . then GEP_{vision2} = 0 ;
-# IF/THEN (manual review needed):
-#   if GEP_{vision3} = . then GEP_{vision3} = 0 ;
-# IF/THEN (manual review needed):
-#   if GEP_{vision4} = . then GEP_{vision4} = 0 ;
-# IF/THEN (manual review needed):
-#   if REP_{vision1} = . then REP_{vision1} = 0 ;
-# IF/THEN (manual review needed):
-#   if REP_{vision2} = . then REP_{vision2} = 0 ;
-# IF/THEN (manual review needed):
-#   if REP_{vision3} = . then REP_{vision3} = 0 ;
-# IF/THEN (manual review needed):
-#   if REP_{vision4} = . then REP_{vision4} = 0 ;
+GEP_FLUX_ALL_QUARTERS = (spark.table('GEP_FLUX_ALL_QUARTERS')
+    .withColumn(f'Claim_paid_{vision1}', F.coalesce(F.col(f'Claim_paid_{vision1}'), F.lit(0)))
+    .withColumn(f'Claim_paid_{vision2}', F.coalesce(F.col(f'Claim_paid_{vision2}'), F.lit(0)))
+    .withColumn(f'Claim_paid_{vision3}', F.coalesce(F.col(f'Claim_paid_{vision3}'), F.lit(0)))
+    .withColumn(f'Claim_paid_{vision4}', F.coalesce(F.col(f'Claim_paid_{vision4}'), F.lit(0)))
+    .withColumn(f'GEP_{vision1}', F.coalesce(F.col(f'GEP_{vision1}'), F.lit(0)))
+    .withColumn(f'GEP_{vision2}', F.coalesce(F.col(f'GEP_{vision2}'), F.lit(0)))
+    .withColumn(f'GEP_{vision3}', F.coalesce(F.col(f'GEP_{vision3}'), F.lit(0)))
+    .withColumn(f'GEP_{vision4}', F.coalesce(F.col(f'GEP_{vision4}'), F.lit(0)))
+    .withColumn(f'REP_{vision1}', F.coalesce(F.col(f'REP_{vision1}'), F.lit(0)))
+    .withColumn(f'REP_{vision2}', F.coalesce(F.col(f'REP_{vision2}'), F.lit(0)))
+    .withColumn(f'REP_{vision3}', F.coalesce(F.col(f'REP_{vision3}'), F.lit(0)))
+    .withColumn(f'REP_{vision4}', F.coalesce(F.col(f'REP_{vision4}'), F.lit(0))))
 GEP_FLUX_ALL_QUARTERS.createOrReplaceTempView('GEP_FLUX_ALL_QUARTERS')
 
 GEP_FLUX_ALL_QUARTERS = spark.sql("""select a.*, b.YTD_VALUE
