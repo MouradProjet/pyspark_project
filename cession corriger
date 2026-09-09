@@ -1,0 +1,339 @@
+# -*- coding: utf-8 -*-
+"""
+CESSION CQS HY26 — calcule la cession de réassurance (traités CQP, inforce,
+new business PY, new business CY, cession BM sinistres/primes) puis consolide.
+
+Réassureurs et codes : MAPFRE=91, RGA=187, SCOR=62, ARCH=100, GEN_RE=75.
+
+Tables sources supposées présentes dans Databricks :
+  cqs_out.cqs_uep_pl_3, cqs_sin.claims_actuals_9, bgd_cession_traite_gen{N},
+  cqs_out.bgd_idean_cqs_cbp_cy, cqs_out.bgd_idean_cqs_cbp_py_all,
+  cqs_out.bgd_idean_cqs_cbp_py, bgd_q425.bgd_idean_q425_final_2,
+  bgd_q425.bgd_idean_cqs_cbp1
+"""
+
+from functools import reduce
+from pyspark.sql import functions as F
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.getOrCreate()
+
+# ═══════════════════════════════════════════════════════════════════════
+# PARAMÈTRES
+# ═══════════════════════════════════════════════════════════════════════
+N     = 2025
+arrete = "2025_09_Q4"
+exer  = "Q425"
+
+CQS_OUT = "cqs_out"
+CQS_SIN = "cqs_sin"
+BGD     = f"bgd_{exer.lower()}"     # bgd_q425
+
+# ═══════════════════════════════════════════════════════════════════════
+# 1. MISE EN FORME BASE CY
+# ═══════════════════════════════════════════════════════════════════════
+donnees_CY = (spark.table(f"bgd_cession_traite_gen{N}")
+              .select("IDEAN", "generation", "surv", "gar", "poste", "Montant"))
+donnees_CY.createOrReplaceTempView("donnees_CY")
+
+# ═══════════════════════════════════════════════════════════════════════
+# 2. UEP — agrégation + transpose (var unique PPNA → POSTE/Montant)
+# ═══════════════════════════════════════════════════════════════════════
+UEP = spark.sql(f"""
+    SELECT idean, gen AS Generation, SURV, gar, Type_Pret, sum(UEP) AS PPNA
+    FROM {CQS_OUT}.cqs_uep_pl_3
+    GROUP BY idean, Generation, SURV, gar, Type_Pret
+""")
+# Supprimer idean null ou = 1
+UEP = UEP.filter(F.col("idean").isNotNull() & (F.col("idean") != 1))
+
+# TRANSPOSE var unique : PPNA → POSTE='PPNA', valeur → Montant
+# (PAS un pivot : c'est un simple renommage + colonne constante)
+UEP = (UEP
+       .withColumn("POSTE", F.lit("PPNA"))
+       .withColumnRenamed("PPNA", "Montant"))
+UEP.createOrReplaceTempView("UEP")
+
+# ═══════════════════════════════════════════════════════════════════════
+# 3. PSAP (reserves) — agrégation + transpose (var unique PSAP)
+# ═══════════════════════════════════════════════════════════════════════
+reserves = spark.sql(f"""
+    SELECT idean, gar, surv, generation AS Generation, type_pret, sum(reserves) AS PSAP
+    FROM {CQS_SIN}.claims_actuals_9
+    GROUP BY idean, gar, surv, Generation, type_pret
+""")
+# TRANSPOSE var unique : PSAP → POSTE='PSAP', valeur → Montant
+reserves = (reserves
+            .withColumn("POSTE", F.lit("PSAP"))
+            .withColumnRenamed("PSAP", "Montant")
+            .withColumn("idean_char", F.col("idean").cast("string"))  # put(idean,8.)
+            .drop("idean")
+            .withColumnRenamed("idean_char", "idean"))
+reserves.createOrReplaceTempView("reserves")
+
+# ═══════════════════════════════════════════════════════════════════════
+# 4. Consolidation PY (uep + reserves)
+# ═══════════════════════════════════════════════════════════════════════
+donnees_py = spark.table("UEP").unionByName(spark.table("reserves"), allowMissingColumns=True)
+donnees_py.createOrReplaceTempView("donnees_py")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 5. TRAITE CQP PY
+# ═══════════════════════════════════════════════════════════════════════
+def split_cess_cqp(cess, taux):
+    df = (spark.table("donnees_py")
+          .filter(F.expr("generation >= 2019 AND generation <= 2022 "
+                         "AND type_pret = 'CQP' AND gar = 10"))
+          .withColumn("cess",
+              F.when(F.col("poste") == "PPNA", -F.col("montant") * (1 - 0.276) * taux)
+               .when(F.col("poste") == "PSAP", -F.col("montant") * taux))
+          .withColumn("code_cess", F.lit(cess)))
+    df.createOrReplaceTempView(f"cess_py_cqp_{cess.lower()}")
+
+split_cess_cqp("RGA", 0.9)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 6. TRAITE INFORCE PY (3 blocs mutuellement exclusifs → filter + union)
+# ═══════════════════════════════════════════════════════════════════════
+def split_cess_inforce(cess, taux):
+    base = spark.table("donnees_py")
+
+    # Bloc 1 : gen <= 2022 et type_pret != CQP
+    b1 = (base.filter(F.expr("generation <= 2022 AND type_pret <> 'CQP'"))
+          .withColumn("cess",
+              F.when(F.col("poste") == "PPNA", -F.col("montant") * 0.96 * taux)
+               .when((F.col("surv") > 2022) & (F.col("poste") == "PSAP"),
+                     -F.col("montant") * taux)))
+
+    # Bloc 2 : gen <= 2018 et type_pret = CQP
+    b2 = (base.filter(F.expr("generation <= 2018 AND type_pret = 'CQP'"))
+          .withColumn("cess",
+              F.when(F.col("poste") == "PPNA", -F.col("montant") * taux * 0.96)
+               .when((F.col("surv") > 2022) & (F.col("poste") == "PSAP"),
+                     -F.col("montant") * taux)))
+
+    # Bloc 3 : gen 2019-2022, type_pret = CQP, gar = 30
+    b3 = (base.filter(F.expr("generation >= 2019 AND generation <= 2022 "
+                             "AND type_pret = 'CQP' AND gar = 30"))
+          .withColumn("cess",
+              F.when(F.col("poste") == "PPNA", -F.col("montant") * taux * 0.96)
+               .when((F.col("surv") > 2022) & (F.col("poste") == "PSAP"),
+                     -F.col("montant") * taux)))
+
+    # Les 3 blocs sont mutuellement exclusifs → union (output de chaque do)
+    df = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), [b1, b2, b3])
+    df = df.withColumn("code_cess", F.lit(cess))
+    df.createOrReplaceTempView(f"cess_py_traite_inforce_{cess.lower()}")
+
+split_cess_inforce("MAPFRE", 0.09)
+split_cess_inforce("RGA", 0.45)
+split_cess_inforce("SCOR", 0.1)
+split_cess_inforce("ARCH", 0.05)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 7. TRAITE REASS new business PY (gen 2023-2025)
+# ═══════════════════════════════════════════════════════════════════════
+def split_cess_newb(cess, taux):
+    df = (spark.table("donnees_py")
+          .filter(F.expr("generation >= 2023 AND generation < 2026"))
+          .withColumn("cess",
+              F.when(F.col("poste") == "PPNA", -F.col("montant") * (1 - 0.276) * taux)
+               .when(F.col("poste") == "PSAP", -F.col("montant") * taux))
+          .withColumn("code_cess", F.lit(cess)))
+    df.createOrReplaceTempView(f"cess_py_newb_{cess.lower()}")
+
+split_cess_newb("RGA", 0.4)
+split_cess_newb("SCOR", 0.1)
+split_cess_newb("MAPFRE", 0.1)
+split_cess_newb("GEN_RE", 0.1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 8. TRAITE new business CY (gen 2026)
+# ═══════════════════════════════════════════════════════════════════════
+def split_cess_cy(cess, taux):
+    df = (spark.table("donnees_CY")
+          .filter(F.col("POSTE").isin("PRIMES", "SINISTRES", "PSAP", "PPNA"))
+          .withColumn("cess", -F.col("montant") * taux)
+          .withColumn("code_cess", F.lit(cess)))
+    df.createOrReplaceTempView(f"cess_cy_cess_{cess.lower()}")
+
+split_cess_cy("GEN_RE", 0.35)
+split_cess_cy("HANOVER_RE", 0.15)
+split_cess_cy("MAPFRE", 0.1)
+
+# COMMACQ : 20% de la cession sur les PRIMES
+cess_cy_commacq1 = (
+    spark.table("cess_cy_cess_hanover_re")
+    .unionByName(spark.table("cess_cy_cess_gen_re"), allowMissingColumns=True)
+    .unionByName(spark.table("cess_cy_cess_mapfre"), allowMissingColumns=True)
+    .filter(F.col("poste") == "PRIMES")
+    .withColumn("COMMACQ_CD", F.col("cess") * 0.2)
+    .select("idean", "gar", "surv", "generation", "code_cess", "COMMACQ_CD"))
+
+cess_cy_commacq = (cess_cy_commacq1
+    .withColumn("POSTE", F.lit("COMMACQ_CD"))
+    .withColumnRenamed("COMMACQ_CD", "cess")
+    .withColumn("Montant", F.lit(0)))
+cess_cy_commacq.createOrReplaceTempView("cess_cy_commacq")
+
+# FAR : facteur règle 78 appliqué à la commission
+cess_cy_far1 = (spark.table("cess_cy_commacq")
+    .withColumn("FAR_CD", (((10 - 0) * (10 - 1)) / (10 * 11)) * F.col("cess"))
+    .select("idean", "gar", "surv", "generation", "code_cess", "FAR_CD"))
+
+cess_cy_far = (cess_cy_far1
+    .withColumn("POSTE", F.lit("FAR_CD"))
+    .withColumnRenamed("FAR_CD", "cess")
+    .withColumn("Montant", F.lit(0)))
+cess_cy_far.createOrReplaceTempView("cess_cy_far")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 9. CONSOLIDATION DES SORTIES PY + CY
+# ═══════════════════════════════════════════════════════════════════════
+tables_cess = [
+    "cess_py_cqp_rga",
+    "cess_py_traite_inforce_mapfre", "cess_py_traite_inforce_arch",
+    "cess_py_traite_inforce_rga", "cess_py_traite_inforce_scor",
+    "cess_py_newb_gen_re", "cess_py_newb_mapfre",
+    "cess_py_newb_rga", "cess_py_newb_scor",
+    "cess_cy_cess_gen_re", "cess_cy_cess_hanover_re", "cess_cy_cess_mapfre",
+    "cess_cy_commacq", "cess_cy_far",
+]
+bgd_cqs_cession = reduce(
+    lambda a, b: a.unionByName(b, allowMissingColumns=True),
+    [spark.table(t) for t in tables_cess])
+
+# Codes réassureurs + enrichissements
+bgd_cqs_cession = (bgd_cqs_cession
+    .withColumn("code_cess",
+        F.when(F.col("code_cess") == "MAPFRE", F.lit("91"))
+         .when(F.col("code_cess") == "RGA", F.lit("187"))
+         .when(F.col("code_cess") == "SCOR", F.lit("62"))
+         .when(F.col("code_cess") == "ARCH", F.lit("100"))
+         .when(F.col("code_cess") == "GEN_RE", F.lit("75"))
+         .otherwise(F.col("code_cess")))
+    .withColumn("typaff", F.lit(11))
+    .withColumn("country", F.lit("IT"))
+    .withColumn("TYPIDEAN", F.lit("DI"))
+    .withColumn("NIVEAU", F.lit("T"))
+    .withColumn("SI", F.lit("CQS"))
+    .withColumn("PERIMETRE", F.lit("CQS"))
+    .withColumn("SOURCE", F.lit("."))
+    .withColumn("DEVISE", F.lit("EUR"))
+    .withColumn("VUE",
+        F.when(F.col("poste").isin("PRIMES", "SINISTRES", "CANCEL") & (F.col("surv") == N),
+               F.lit(f"FAI_CPTA{N}"))
+         .when(F.col("poste").isin("PRIMES", "SINISTRES", "CANCEL") & (F.col("surv") < N),
+               F.lit(f"RAI_CPTA{N}"))
+         .otherwise(F.lit(f"SSI_CLOT{N}")))
+    .withColumn("ENTITY",
+        F.when(F.col("gar") == 10, F.lit("FICL"))
+         .when(F.col("gar") == 30, F.lit("FACL")))
+    # CESS = input(code_cess, 8.) → cast numérique
+    .withColumn("CESS", F.col("code_cess").cast("int"))
+    .drop("code_cess"))
+bgd_cqs_cession.write.mode("overwrite").saveAsTable(f"{CQS_OUT}.bgd_cqs_cession")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 10. CESSION DES BM — SINISTRES & PRIMES (new business)
+# ═══════════════════════════════════════════════════════════════════════
+def cess_newb_bm_sin(cess, taux):
+    df = (spark.table(f"{CQS_OUT}.bgd_idean_cqs_cbp_py_all")
+          .filter(F.expr("POSTE = 'SINISTRES' AND surv IN (2023,2024,2025)"))
+          .withColumn("cess", -F.col("montant") * taux)
+          .withColumn("code_cess", F.lit(cess)))
+    df.createOrReplaceTempView(f"cession_bm_sinistres_{cess.lower()}")
+
+cess_newb_bm_sin("MAPFRE", 0.1)
+cess_newb_bm_sin("RGA", 0.4)
+cess_newb_bm_sin("SCOR", 0.1)
+cess_newb_bm_sin("GEN_RE", 0.1)
+
+def cess_newb_bm_primes(cess, taux):
+    df = (spark.table(f"{CQS_OUT}.bgd_idean_cqs_cbp_py")
+          .filter(F.expr(f"surv >= 2023 AND surv < {N} AND poste = 'PRIMES'"))
+          .withColumn("cess", -F.col("montant") * (1 - 0.276) * taux)
+          .withColumn("code_cess", F.lit(cess)))
+    df.createOrReplaceTempView(f"cession_bm_primes_{cess.lower()}")
+
+cess_newb_bm_primes("RGA", 0.4)
+cess_newb_bm_primes("SCOR", 0.1)
+cess_newb_bm_primes("MAPFRE", 0.1)
+cess_newb_bm_primes("GEN_RE", 0.1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 11. CONSOLIDATION CESSION BM
+# ═══════════════════════════════════════════════════════════════════════
+# NOTE : les tables cession_cy_sinistres_* et cession_cy_primes_* du SAS
+# n'existent pas dans ce programme (créées ailleurs). On ne consolide que
+# les tables réellement produites ici (BM sinistres + BM primes).
+tables_bm = [
+    "cession_bm_sinistres_gen_re", "cession_bm_sinistres_mapfre",
+    "cession_bm_sinistres_rga", "cession_bm_sinistres_scor",
+    "cession_bm_primes_gen_re", "cession_bm_primes_mapfre",
+    "cession_bm_primes_rga", "cession_bm_primes_scor",
+]
+def _exists(t):
+    try:
+        spark.table(t); return True
+    except Exception:
+        return False
+tables_bm = [t for t in tables_bm if _exists(t)]
+
+bgd_cqs_cession_bm = reduce(
+    lambda a, b: a.unionByName(b, allowMissingColumns=True),
+    [spark.table(t) for t in tables_bm])
+
+bgd_cqs_cession_bm = (bgd_cqs_cession_bm
+    .withColumn("CESS2",
+        F.when(F.col("code_cess") == "MAPFRE", F.lit(91))
+         .when(F.col("code_cess") == "RGA", F.lit(187))
+         .when(F.col("code_cess") == "SCOR", F.lit(62))
+         .when(F.col("code_cess") == "ARCH", F.lit(100))
+         .when(F.col("code_cess") == "GEN_RE", F.lit(75)))
+    .withColumn("typaff", F.lit(11))
+    .drop("montant")
+    .withColumnRenamed("cess", "Montant")
+    .withColumnRenamed("CESS2", "CESS")
+    .withColumn("country", F.lit("IT"))
+    .withColumn("TYPIDEAN", F.lit("DI"))
+    .withColumn("NIVEAU", F.lit("T"))
+    .withColumn("SI", F.lit("CQS"))
+    .withColumn("PERIMETRE", F.lit("CQS"))
+    .withColumn("SOURCE", F.lit("."))
+    .withColumn("DEVISE", F.lit("EUR"))
+    .withColumn("VUE", F.lit(f"RAI_CPTA{N}")))
+bgd_cqs_cession_bm.write.mode("overwrite").saveAsTable(f"{CQS_OUT}.bgd_cqs_cession_bm")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 12. CONSOLIDATION PY + CY EN VISION ULTIMATE
+# ═══════════════════════════════════════════════════════════════════════
+# Récupération des ouvertures 2025
+cqs_ouv_2025 = (spark.table(f"{BGD}.bgd_idean_q425_final_2")
+    .filter(F.expr("VUE = 'SSI_OUV2025' AND SI = 'CQS'"))
+    .select("TYPAFF", "TYPIDEAN", "GAR", "Niveau", "VUE", "SURV", "CESS",
+            "country", "entity", "Source", "DEVISE", "Montant",
+            "PERIMETRE", "SI", "IDEAN", "POSTE"))
+cqs_ouv_2025.createOrReplaceTempView("cqs_ouv_2025")
+
+# Consolidation finale : base + cessions PY + cessions BM
+bgd_final = reduce(
+    lambda a, b: a.unionByName(b, allowMissingColumns=True),
+    [spark.table(f"{BGD}.bgd_idean_cqs_cbp1"),
+     spark.table(f"{CQS_OUT}.bgd_cqs_cession"),
+     spark.table(f"{CQS_OUT}.bgd_cqs_cession_bm")])
+
+bgd_final = (bgd_final
+    .drop("generation", "type_pret", "code_cess", "cess2")
+    .withColumn("PERIMETRE", F.lit("CQS")))
+bgd_final.write.mode("overwrite").saveAsTable(f"{BGD}.bgd_idean_cqs_cbp_yc_cess")
+
+print("Cession CQS terminée.")
