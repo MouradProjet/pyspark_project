@@ -1,0 +1,168 @@
+# -*- coding: utf-8 -*-
+"""
+CONTRÔLE GEP — compare les GEP DAAP (calculés) vs GEP PM (Portfolio Monitoring)
+par pays, cover, scheme, paccyear et payfreq. Calcule les écarts (LAG) et exporte.
+
+Prérequis : les tables {pays}_GEP_ALL1 (Qa) et {pays}_GEP_ALL2 (Qp) doivent
+exister (sorties du programme EA_GEP), et les fichiers Excel GEP PM d'entrée.
+"""
+
+from functools import reduce
+from pyspark.sql import functions as F
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.getOrCreate()
+
+# ═══════════════════════════════════════════════════════════════════════
+# PARAMÈTRES
+# ═══════════════════════════════════════════════════════════════════════
+ea_imp   = "Mar_24"
+arrete1  = "2024_06_Prov"
+qa       = "Q22024"          # trimestre arrêté courant
+month1, day1, yr1, hms1, dossier1 = "06", "28", "2024", "000000", "202406"
+
+arrete2  = "2024_04_V2"
+qp       = "Q12024"          # trimestre précédent
+month2, day2, yr2, hms2, dossier2 = "03", "29", "2024", "000000", "202403"
+
+q1       = qp                # alias utilisé dans les LAG
+
+CHECK_SCHEMA = "check_gep"
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CHECK_SCHEMA}")
+
+BASE = "~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP"
+
+# Mapping COVER → COVER_CODE (commun aux deux trimestres)
+def add_cover_code(df):
+    return df.withColumn("COVER_CODE",
+        F.when(F.col("cover").isin("DA", "DS"), F.lit("DD"))
+         .when(F.col("cover").isin("DY", "DZ"), F.lit("DX"))
+         .when(F.col("cover").isin("DI", "DJ"), F.lit("DH"))
+         .when(F.col("cover").isin("DF", "DG"), F.lit("DFG"))
+         .when(F.col("cover").isin("IA", "IS"), F.lit("ID"))
+         .when(F.col("cover").isin("II", "IJ"), F.lit("IH"))
+         .when(F.col("cover").isin("IY", "IZ"), F.lit("IX"))
+         .when(F.col("cover").isin("IG", "IF"), F.lit("IFG"))
+         .when(F.col("cover").isin("EL", "EW"), F.lit("ELW"))
+         .otherwise(F.col("cover")))
+
+
+def mise_en_forme_daap(table_source):
+    """Met en forme une table GEP DAAP (scheme, cover_code, paccyear, filtres)."""
+    df = (spark.table(table_source)
+        .withColumn("scheme",
+            F.expr("concat(trim(PRODUCT), '.', trim(PRODUCT_VERSION))"))
+        .withColumn("Exp_month", F.expr("substring(Qtr_Period,2,1)"))
+        .withColumn("Exp_yr",    F.expr("substring(Qtr_Period,3,4)"))
+        .withColumn("GEP", F.coalesce(F.col("GEP"), F.lit(0))))
+    df = add_cover_code(df)
+    # paccyear = début de trimestre selon Exp_month
+    df = df.withColumn("paccyear",
+        F.when(F.col("Exp_month") == "1", F.expr("concat(Exp_yr,'0101')"))
+         .when(F.col("Exp_month") == "2", F.expr("concat(Exp_yr,'0401')"))
+         .when(F.col("Exp_month") == "3", F.expr("concat(Exp_yr,'0701')"))
+         .when(F.col("Exp_month") == "4", F.expr("concat(Exp_yr,'1001')")))
+    # Filtres : retirer avant déc 2002
+    df = df.filter(~(F.col("Exp_yr") < 2002))
+    df = df.filter(~((F.col("Exp_yr") == 2002) & (F.col("Exp_month") < 12)))
+    df = df.withColumn("paccyear", F.col("paccyear").cast("long"))
+    return df
+
+
+def check_gep_amt(pays, cc):
+    # ── 1. Import GEP PM (Excel) ───────────────────────────────────────
+    import_01 = (f"{BASE}/{arrete1}/02_Elements_techniques/TIA/Arrete reel"
+                 f"/RESERVES/ON-SYSTEM/IBNR/Inputs/EA {qa}"
+                 f"/{pays}_Upf_MF_MRT_Blk_{ea_imp}.xlsx")
+    gep_pm = (spark.read.format("com.crealytics.spark.excel")
+              .option("dataAddress", "'FINAL_FILE'!A1")
+              .option("header", "true")
+              .option("inferSchema", "false")     # décimaux fiables
+              .load(import_01))
+
+    # Normalisation payfreq + cast GEP
+    gep_pm = (gep_pm
+        .withColumn("payfreq",
+            F.when(F.col("payfreq") == "Upf", F.lit("UPF"))
+             .when(F.col("payfreq") == "Blk", F.lit("BLK"))
+             .otherwise(F.col("payfreq")))
+        .withColumn("gross_earned_prem", F.col("gross_earned_prem").cast("double")))
+    gep_pm.createOrReplaceTempView("GEP_PM_Input")
+
+    gep_pm_agg = spark.sql(f"""
+        SELECT DISTINCT Country_cd AS country, COVER_CODE, scheme,
+               paccyear, payfreq, sum(gross_earned_prem) AS GEP_PM_{qp}
+        FROM GEP_PM_Input
+        GROUP BY Country_cd, COVER_CODE, scheme, paccyear, payfreq
+    """)
+    gep_pm_agg.createOrReplaceTempView(f"GEP_PM_{pays}")
+
+    # ── 2. GEP DAAP Qa et Qp ───────────────────────────────────────────
+    daap_qa = mise_en_forme_daap(f"{pays}_GEP_ALL1")
+    daap_qa = (daap_qa.groupBy("country", "COVER_CODE", "scheme", "paccyear", "payfreq")
+               .agg(F.sum("GEP").alias(f"GEP_DAAP_{qa}")))
+    daap_qa.createOrReplaceTempView(f"GEP_DAAP_{pays}_{qa}")
+
+    daap_qp = mise_en_forme_daap(f"{pays}_GEP_ALL2")
+    daap_qp = (daap_qp.groupBy("country", "COVER_CODE", "scheme", "paccyear", "payfreq")
+               .agg(F.sum("GEP").alias(f"GEP_DAAP_{qp}")))
+    daap_qp.createOrReplaceTempView(f"GEP_DAAP_{pays}_{qp}")
+
+    # ── 3. Jointure des 3 sources (full outer) ─────────────────────────
+    keys = ["country", "COVER_CODE", "scheme", "paccyear", "payfreq"]
+    check = (daap_qp
+        .join(gep_pm_agg, keys, "full")
+        .join(daap_qa, keys, "full"))
+    # null → 0 sur les montants
+    for c in [f"GEP_DAAP_{qp}", f"GEP_PM_{qp}", f"GEP_DAAP_{qa}"]:
+        check = check.withColumn(c, F.coalesce(F.col(c), F.lit(0)))
+
+    # ── 4. Agrégation + calcul des écarts (LAG) ────────────────────────
+    check = (check.groupBy("country", "payfreq", "paccyear")
+        .agg(
+            F.sum(f"GEP_DAAP_{qa}").alias(f"GEP_DAAP_{qa}"),
+            F.sum(f"GEP_DAAP_{qp}").alias(f"GEP_DAAP_{qp}"),
+            F.sum(f"GEP_PM_{qp}").alias(f"GEP_PM_{qp}"))
+        # écarts
+        .withColumn(f"LAG_PM_DAAP{qa}",   F.col(f"GEP_DAAP_{qa}") - F.col(f"GEP_PM_{qp}"))
+        .withColumn(f"LAG_DAAP_DAAP{qa}", F.col(f"GEP_DAAP_{qa}") - F.col(f"GEP_DAAP_{qp}"))
+        .withColumn(f"LAG_PM_DAAP{qp}",   F.col(f"GEP_DAAP_{qp}") - F.col(f"GEP_PM_{qp}")))
+
+    check.write.mode("overwrite").saveAsTable(f"{CHECK_SCHEMA}.CHECK_GEP_{pays}")
+
+    # ── 5. Export Excel (une feuille par pays) ─────────────────────────
+    outfile = (f"{BASE}/{arrete1}/02_Elements_techniques/TIA/Arrete reel"
+               f"/GEP/Controle/GEP DAAP vs PM/Output/Controle_GEP.xlsx")
+    (check.write.format("com.crealytics.spark.excel")
+       .option("dataAddress", f"'{cc}'!A1")
+       .option("header", "true")
+       .mode("overwrite")
+       .save(outfile))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# EXÉCUTION
+# ═══════════════════════════════════════════════════════════════════════
+pays_list = [
+    ("SWITZERLAND","CH"),("GERMANY","DE"),("DENMARK","DK"),("SPAIN","ES"),
+    ("FRANCE","FR"),("FINLAND","FI"),("GREECE","GR"),("IRELAND","IE"),
+    ("ITALY","IT"),("NETHERLANDS","NL"),("NORWAY","NO"),("POLAND","PL"),
+    ("PORTUGAL","PT"),("SWEDEN","SE"),("TURKEY","TR"),("UK","UK"),
+]
+for pays, cc in pays_list:
+    print(f"Contrôle GEP {pays}...")
+    try:
+        check_gep_amt(pays, cc)
+    except Exception as e:
+        print(f"  ⚠ {pays} : {e}")
+
+print("Contrôle GEP terminé.")
+
+# ═══════════════════════════════════════════════════════════════════════
+# NOTE : le SAS contenait après ce point du CODE DE TEST/DEBUG ad hoc
+# (comparaisons de bases BLK entre trimestres, vérifs de term, etc.),
+# marqué "LANCER JUSQUE Là". Ce code n'est pas de la logique de production
+# et contenait des références à des tables temporaires (BASE_Q121, BASE_Q420,
+# BASE_Q321...) non définies dans ce programme. Il n'est pas traduit ici —
+# à réécrire ponctuellement si un contrôle spécifique est nécessaire.
+# ═══════════════════════════════════════════════════════════════════════
