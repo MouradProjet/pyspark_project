@@ -183,11 +183,78 @@ for pays, cc in pays_list:
 
 print("Contrôle GEP terminé.")
 
+
 # ═══════════════════════════════════════════════════════════════════════
-# NOTE : le SAS contenait après ce point du CODE DE TEST/DEBUG ad hoc
-# (comparaisons de bases BLK entre trimestres, vérifs de term, etc.),
-# marqué "LANCER JUSQUE Là". Ce code n'est pas de la logique de production
-# et contenait des références à des tables temporaires (BASE_Q121, BASE_Q420,
-# BASE_Q321...) non définies dans ce programme. Il n'est pas traduit ici —
-# à réécrire ponctuellement si un contrôle spécifique est nécessaire.
+# CODE DE TEST / DEBUG (après "LANCER JUSQUE Là")
 # ═══════════════════════════════════════════════════════════════════════
+# Comparaisons ponctuelles de bases entre trimestres pour vérifier les termes
+# des polices. Code de contrôle ad hoc — à lancer manuellement au besoin,
+# PAS dans le run de production. Les schémas/tables ci-dessous doivent exister.
+# ═══════════════════════════════════════════════════════════════════════
+
+def run_tests():
+    """Lance les contrôles ad hoc (débogage des termes de polices)."""
+
+    # ── TEST 1 : comparaison ITALY Q4 vs GERMANY Q3 sur le terme ───────
+    base_q422 = (spark.table("tia2.ITALY_BLK")
+        .filter(F.expr("PRODUCT IN ('X3J') AND PRODUCT_VERSION IN ('1') AND COVER_CODE IN ('LR')"))
+        .withColumnRenamed("start_date", "start_date2")
+        .withColumnRenamed("end_date", "end_date2")
+        .withColumnRenamed("cancel_date", "cancel_date2"))
+
+    base_q322 = (spark.table("tia1.GERMANY_BLK")
+        .filter(F.expr("PRODUCT IN ('W3J') AND PRODUCT_VERSION IN ('1') AND COVER_CODE IN ('LR')")))
+
+    # LEFT JOIN sur POLICY_NUMBER + calcul du terme (écart en mois)
+    test = (base_q422.join(base_q322, ["POLICY_NUMBER"], "left")
+        .withColumn("term", F.expr(
+            "(year(start_date)-year(start_date2))*12 + month(start_date) - month(start_date2)"))
+        .withColumn("TRANS_YR", F.expr("year(policy_transaction_date)")))
+    test.createOrReplaceTempView("TEST")
+
+    # Contrôle : lignes où le terme n'est pas nul
+    check4 = test.filter(F.col("term") != 0)
+    print(f"TEST terme != 0 : {check4.count()} lignes")
+
+    # ── TEST 2 : filtres produits spécifiques (vérifs GEP) ─────────────
+    gep_de = (spark.table("ea.GERMANY_EA_MRTRANS_2")
+        .filter(F.expr("PRODUCT IN ('3I') AND PRODUCT_VERSION IN ('4')")))
+    print(f"GERMANY MRTRANS 3I.4 : {gep_de.count()} lignes")
+
+    gep_it = (spark.table("gep2.ITALY_GEP_ALL")
+        .filter(F.expr("PRODUCT IN ('BN3') AND cover IN ('DS','DA')")))
+    print(f"ITALY GEP BN3 : {gep_it.count()} lignes")
+
+    ireland_test = (spark.table("gep2.IRELAND_GEP_ALL")
+        .filter(F.expr("PRODUCT = '7C' AND product_version = '1' AND cover IN ('DA','DS')")))
+    print(f"IRELAND GEP 7C.1 : {ireland_test.count()} lignes")
+
+    # ── TEST 3 : comparaison de termes sur BASE_Q121 vs BASE_Q420 ──────
+    # NB : ces tables (BASE_Q121, BASE_Q420) doivent être définies au préalable.
+    # Le SAS avait 'group h.POLICY_NUMBER' (invalide) → c'est en fait une
+    # déduplication : on garde le left join sans group by.
+    check = (spark.table("BASE_Q121").alias("h")
+        .join(spark.table("BASE_Q420").select(
+                F.col("POLICY_NUMBER").alias("s_pol"),
+                F.col("start_date").alias("start_date2"),
+                F.col("cover_start_date").alias("cover_start_date2"),
+                F.col("cover_end_date").alias("cover_end_date2"),
+                F.col("cancel_date").alias("scancel_date2")).alias("s"),
+              F.col("h.POLICY_NUMBER") == F.col("s.s_pol"), "left")
+        .drop("s_pol")
+        .dropDuplicates())
+    # Calcul des écarts de termes (start, end, cancel)
+    check = (check
+        .withColumn("term", F.expr(
+            "(year(start_date)-year(start_date2))*12 + month(start_date) - month(start_date2)"))
+        .withColumn("term2", F.expr(
+            "(year(end_date)-year(end_date2))*12 + month(end_date) - month(end_date2)"))
+        .withColumn("term3", F.expr(
+            "(year(cancel_date)-year(scancel_date2))*12 + month(cancel_date) - month(scancel_date2)")))
+    # Contrôle : term3 non nul (SAS 'term3 NOT IS NULL OR NOT IN (0)' = term3 IS NOT NULL AND != 0)
+    check3 = check.filter(F.col("term3").isNotNull() & (F.col("term3") != 0))
+    print(f"TEST term3 anormal : {check3.count()} lignes")
+
+
+# Décommenter pour lancer les tests ad hoc :
+# run_tests()
