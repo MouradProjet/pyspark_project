@@ -69,6 +69,30 @@ def mise_en_forme_daap(table_source):
     return df
 
 
+def gep_agr(pays, cc):
+    """Importe les 2 CSV de GEP DAAP (trimestre courant Qa et précédent Qp)
+    pour un pays — sorties du programme EA_GEP_export."""
+    # Trimestre courant (Qa) → {pays}_GEP_ALL1
+    rep1 = (f"{BASE}/{arrete1}/02_Elements_Techniques/TIA/Arrete reel"
+            f"/PM Export/{dossier1}")
+    nom1 = f"{cc}_GEP_DAVC_{yr1}{month1}{day1}_{hms1}.csv"
+    gep1 = (spark.read
+            .option("header", "true")
+            .option("inferSchema", "false")     # décimaux fiables → cast ensuite
+            .csv(f"{rep1}/{nom1}"))
+    gep1.createOrReplaceTempView(f"{pays}_GEP_ALL1")
+
+    # Trimestre précédent (Qp) → {pays}_GEP_ALL2
+    rep2 = (f"{BASE}/{arrete2}/02_Elements_Techniques/TIA/Arrete reel"
+            f"/PM Export/{dossier2}")
+    nom2 = f"{cc}_GEP_DAVC_{yr2}{month2}{day2}_{hms2}.csv"
+    gep2 = (spark.read
+            .option("header", "true")
+            .option("inferSchema", "false")
+            .csv(f"{rep2}/{nom2}"))
+    gep2.createOrReplaceTempView(f"{pays}_GEP_ALL2")
+
+
 def check_gep_amt(pays, cc):
     # ── 1. Import GEP PM (Excel) ───────────────────────────────────────
     import_01 = (f"{BASE}/{arrete1}/02_Elements_techniques/TIA/Arrete reel"
@@ -152,7 +176,8 @@ pays_list = [
 for pays, cc in pays_list:
     print(f"Contrôle GEP {pays}...")
     try:
-        check_gep_amt(pays, cc)
+        gep_agr(pays, cc)         # importe les 2 CSV GEP DAAP (Qa et Qp)
+        check_gep_amt(pays, cc)   # calcule le contrôle DAAP vs PM
     except Exception as e:
         print(f"  ⚠ {pays} : {e}")
 
