@@ -3,9 +3,12 @@
 SPECIFICATION — chargement des paramètres pays (Model Properties).
 
 Chaque pays a un fichier Excel '{pays} Model Properties.xlsx' contenant
-plusieurs feuilles (RESERVE_GROUP_SPEC, MNTHLY_BNFT_LIMITS, ...).
-Chaque feuille est PERSISTÉE en table Delta {PARAMS_SCHEMA}.{pays}_{FEUILLE},
-accessible depuis n'importe quelle session (pas besoin de recharger les Excel).
+plusieurs feuilles. Ce programme les persiste en tables Delta
+params.{pays}_{FEUILLE}, accessibles depuis n'importe quelle session.
+
+Version explicite : la fonction specification(pays) traite chaque pays via un
+bloc lisible. Les 4 feuilles communes sont chargées pour tous les pays, puis
+les feuilles spécifiques (FR, UK) sont ajoutées selon le pays.
 """
 
 from pyspark.sql import functions as F
@@ -18,63 +21,55 @@ spark = SparkSession.builder.getOrCreate()
 # ═══════════════════════════════════════════════════════════════════════
 balancedate   = "26/06/2026"
 arrete        = "2026_06_Prov"
-PARAMS_SCHEMA = "params"          # schéma où persister les tables de paramètres
+PARAMS_SCHEMA = "params"
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {PARAMS_SCHEMA}")
 
-BASE = ("~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}"
-        "/02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM"
-        "/CASES RESERVES/Model Properties")
-
-# Feuilles à charger : communes à tous les pays + spécifiques par pays.
-# Chaque entrée = (feuille, suffixe_table). La table s'appelle {pays}_{suffixe}.
-FEUILLES_COMMUNES = [
-    ("RESERVE_GROUP_SPEC",     "RESERVE_GROUP_SPEC"),
-    ("MNTHLY_BNFT_LIMITS",     "MNTHLY_BNFT_LIMITS"),
-    ("OTSTANDING_BLNC_LIMITS", "OTSTANDING_BLNC_LIMITS"),
-    ("TRANS_TYPE_MAP",         "TRANS_TYPE_MAP"),
-]
-FEUILLES_PAR_PAYS = {
-    "FR": [("SCHEME_DATABASE", "SCHEME_DATABASE"), ("BEN_POUC", "BEN_POUC")],
-    "UK": [("FIXED_BNFT_LIMITS", "FIXED_BNFT_LIMITS")],
-}
-
-# Colonnes numériques (bornes) à caster en double après lecture, par feuille.
-# inferSchema='false' lit tout en texte pour ne pas tronquer les décimaux ;
-# on cast ensuite explicitement en double là où la valeur est numérique.
-COLONNES_NUM = {
-    "MNTHLY_BNFT_LIMITS":     ["LOWER", "UPPER"],
-    "OTSTANDING_BLNC_LIMITS": ["LOWER", "UPPER"],
-}
-
 
 def import_sheet(fichier, feuille, table):
-    """Lit une feuille Excel et la persiste en table Delta (décimaux préservés)."""
+    """Lit une feuille Excel et la persiste en table Delta (décimaux préservés).
+
+    inferSchema=false lit tout en texte pour ne pas tronquer les petits décimaux
+    (ex. 0.002) ; usePlainNumberFormat lit la valeur brute et non l'affichage.
+    Les colonnes de bornes LOWER/UPPER sont ensuite castées en double.
+    """
     df = (spark.read.format("com.crealytics.spark.excel")
           .option("dataAddress", f"'{feuille}'!A1")
           .option("header", "true")
-          .option("inferSchema", "false")          # texte → pas de troncature
-          .option("usePlainNumberFormat", "true")  # valeur brute, pas l'affichage
+          .option("inferSchema", "false")
+          .option("usePlainNumberFormat", "true")
           .load(fichier))
-    # Cast des colonnes numériques connues (virgule décimale gérée)
-    for col in COLONNES_NUM.get(feuille, []):
+    # Cast des bornes numériques si présentes (virgule décimale gérée)
+    for col in ("LOWER", "UPPER"):
         if col in df.columns:
             df = df.withColumn(col, F.regexp_replace(F.col(col), ",", ".").cast("double"))
     df.write.mode("overwrite").saveAsTable(f"{PARAMS_SCHEMA}.{table}")
 
 
 def specification(pays):
-    """Charge et persiste toutes les feuilles de paramètres pour un pays."""
-    fichier = f"{BASE.format(arrete=arrete)}/{pays} Model Properties.xlsx"
-    feuilles = FEUILLES_COMMUNES + FEUILLES_PAR_PAYS.get(pays, [])
-    for feuille, suffixe in feuilles:
-        # cas particulier UK : la table est {pays}FIXED_BNFT_LIMITS (sans '_')
-        table = f"{pays}{suffixe}" if suffixe == "FIXED_BNFT_LIMITS" else f"{pays}_{suffixe}"
-        import_sheet(fichier, feuille, table)
+    """Charge et persiste les feuilles de paramètres pour un pays."""
+
+    fichier = (f"~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/{arrete}"
+               f"/02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM"
+               f"/CASES RESERVES/Model Properties/{pays} Model Properties.xlsx")
+
+    # ── Feuilles communes à TOUS les pays ──────────────────────────────
+    import_sheet(fichier, "RESERVE_GROUP_SPEC",     f"{pays}_RESERVE_GROUP_SPEC")
+    import_sheet(fichier, "MNTHLY_BNFT_LIMITS",     f"{pays}_MNTHLY_BNFT_LIMITS")
+    import_sheet(fichier, "OTSTANDING_BLNC_LIMITS", f"{pays}_OTSTANDING_BLNC_LIMITS")
+    import_sheet(fichier, "TRANS_TYPE_MAP",         f"{pays}_TRANS_TYPE_MAP")
+
+    # ── Feuilles supplémentaires selon le pays ─────────────────────────
+    if pays == "FR":
+        import_sheet(fichier, "SCHEME_DATABASE", f"{pays}_SCHEME_DATABASE")
+        import_sheet(fichier, "BEN_POUC",        f"{pays}_BEN_POUC")
+
+    elif pays == "UK":
+        import_sheet(fichier, "FIXED_BNFT_LIMITS", f"{pays}FIXED_BNFT_LIMITS")
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# EXÉCUTION
+# EXÉCUTION — un appel par pays
 # ═══════════════════════════════════════════════════════════════════════
 pays_list = [
     "UK", "FI", "FR", "SE", "PT", "DE", "PL", "IT", "NO", "ES",
