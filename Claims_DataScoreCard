@@ -1,0 +1,1632 @@
+%LET Arrete = 2023_09_Prov ; 
+
+LIBNAME CR_Q323 "~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete./02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM/CASES RESERVES/Output";
+libname DATA2 "~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete./02_Elements_Techniques/TIA/Extraction Donnees/Claims Extracts";
+libname FINAL "~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete./02_Elements_Techniques/TIA/Arrete reel/RESERVES/DATA QUALITY/Claims Score Card";
+%LET Basefolder = ~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete./02_Elements_Techniques/TIA/Arrete reel/RESERVES/DATA QUALITY/ScoreCard/Model Properties;
+
+%LET Balancedate = '30/09/2023';
+%LET Runname = 202309 ;
+
+
+/*Import GBP Rates for converting benefit amounts later */
+
+%MACRO IMPORT_EXCEL(FILE=,OUT=,ONGLET=,);
+
+PROC IMPORT                 
+DATAFILE= &FILE.
+OUT= WORK.&OUT. 
+DBMS=xlsx REPLACE
+
+;
+SHEET=&ONGLET. ;
+RUN;
+%MEND;
+
+%let Import_02="~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete./02_Elements_techniques/TIA/Arrete reel/DATA QUALITY/Claims Score Card/Input/FX_Rates_&Runname..xlsx";
+%IMPORT_EXCEL(FILE=&Import_02.,OUT=GBP_Rates ,ONGLET=Rates);
+
+%let Import_03="~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete./02_Elements_Techniques/TIA/Arrete reel/RESERVES/ON-SYSTEM/CASES RESERVES/Model Properties/SDB.xlsx" ;
+%IMPORT_EXCEL(FILE=&Import_03.,OUT=Carto_TIA,ONGLET=Carto_TIA);
+
+
+
+%MACRO Scorecard(c);
+
+/*%LET c = UK ;*/
+
+/*Creates version of extracts with flag variables for scorecard*/
+
+
+PROC SQL;
+
+CREATE TABLE CLMHDR_&c._Scorecard as SELECT 
+
+            *,
+			"   " format=$3. as Rsrv_Grp,
+			0 as COVER_flag,
+			0 as scheme_flag,
+            0 as incident_date_flag,
+			0 as COVER_START_DATE_flag,
+			0 as COVER_END_DATE_flag,
+            0 as FIRST_OPEN_DATE_flag,
+			0 as FIRST_CLOSE_DATE_flag,
+			0 as REOPEN_DATE_flag,
+			0 as RECLOSE_DATE_flag,
+			0 as STATUS_flag,
+			0 as INSURANCE_TERM_flag,
+			0 as UW_COMPANY_flag,
+			0 as MONTHLY_BENEFIT_flag,
+			0 as OUTSTANDING_BALANCE_flag,
+			0 as MAX_NO_OF_PAYMENTS_flag,
+			0 as DECISION_DATE_flag,
+			0 as Close_Date_flag,
+			0 as AGENT_LOAN_AGR_NO_flag
+
+	FROM DATA2.&c._CLMHDR
+	ORDER BY CLA_CASE_NO;
+QUIT;
+
+PROC SQL;
+UPDATE CLMHDR_&c._Scorecard
+SET incident_date_flag = 1
+WHERE incident_date = .;
+QUIT;
+
+
+PROC SQL;
+
+CREATE TABLE CLMTRNS_&c._Scorecard as SELECT 
+
+            *,
+			0 as CLA_CASE_NO_Flag,
+			0 as TRANS_DATE_flag,
+			0 as CURRENCY_AMT_flag,
+			0 as SPECIFICATION_flag,
+			0 as ITEM_CLASS_flag,
+			0 as GROSS_AMT_flag,
+			0 as DUE_DATE_flag,
+			0 as SUBITEM_TYPE_flag,
+			0 as ACC_ITEM_NO_flag
+			
+FROM DATA2.&c._CLMTRNS
+
+ORDER BY CLA_CASE_NO;
+QUIT;
+
+/*Add Client*/
+
+
+
+
+%IF &c. = FR %THEN %DO;
+
+PROC SQL;
+Create table CLMHDR_&c._Scorecard as 
+select p.*,q.Agent_Name as Agent 
+from  CLMHDR_&c._Scorecard p
+left join Carto_TIA q on (p.Country=q.Country and p.Prod_Id=q.Product_id) ;
+Quit;
+
+%END;
+
+%ELSE %DO;
+
+PROC SQL;
+Create table CLMHDR_&c._Scorecard as 
+select p.*,q.Agent_Name as Agent 
+from  CLMHDR_&c._Scorecard p
+left join Carto_TIA q on (p.Country=q.Country and p.Prod_Id=q.Product_id);
+Quit;
+
+%END;
+
+/*A1 Specification*/
+
+/*Bring in  Model Properties specification*/
+
+%let Import_03="~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete./02_Elements_techniques/TIA/Arrete reel/DATA QUALITY/Claims Score Card/Model Properties/&c. Model Properties.xlsx" ;
+
+%IMPORT_EXCEL(FILE=&Import_03.,OUT=RESERVE_GROUP_SPEC_&c.,ONGLET=RESERVE_GROUP_SPEC);
+%IMPORT_EXCEL(FILE=&Import_03.,OUT=MNTHLY_BNFT_LIMITS_&c.,ONGLET=MNTHLY_BNFT_LIMITS);
+%IMPORT_EXCEL(FILE=&Import_03.,OUT=OS_BLNC_LIMITS_&c.,ONGLET=OTSTANDING_BLNC_LIMITS);
+%IMPORT_EXCEL(FILE=&Import_03.,OUT=TRANS_TYPE_MAP_&c.,ONGLET=TRANS_TYPE_MAP);
+
+
+
+%IF &c. = FR %THEN %DO;
+
+%IMPORT_EXCEL(FILE=&Import_03.,OUT=SCHEME_DATABASE_&c..,ONGLET=SCHEME_DATABASE);
+%IMPORT_EXCEL(FILE=&Import_03.,OUT=BEN_POUC_&c.,ONGLET=BEN_POUC);
+
+/*PROC IMPORT OUT= SCHEME_DATABASE_&c.
+            DATAFILE= "&Basefolder./&c. Model Properties.xlsx" REPLACE;
+     RANGE="SCHEME_DATABASE$"; 
+RUN;
+PROC IMPORT OUT= BEN_POUC_&c.
+            DATAFILE= "&Basefolder./&c. Model Properties.xlsx" REPLACE;
+     RANGE="BEN_POUC$"; 
+RUN;
+*/
+
+%END;
+
+
+%IF &c. = UK %THEN %DO;
+
+%IMPORT_EXCEL(FILE=&Import_03.,OUT=FIXED_BNFT_LIMITS_&c.,ONGLET=FIXED_BNFT_LIMITS);
+
+/*PROC IMPORT OUT = FIXED_BNFT_LIMITS_&c.
+            DATAFILE= "&Basefolder./&c. Model Properties.xlsx" REPLACE;
+     RANGE="FIXED_BNFT_LIMITS$";
+RUN;
+*/
+
+%END;
+%ELSE %DO;
+%END;
+
+/*A2 Filter*/
+
+/*From 1st January 2011, Genworth had to pay the tax for benefit amounts that it paid out
+(previously it would be the customer). The benefit given in the extract was the benefit given to the customer,
+and so for reserving purposes, tax had to be added. 
+After 9th October 2011, the gross amount was correct in the extract data, so the correction was no longer needed.*/
+
+%IF &c. = NL %THEN %DO;
+PROC SQL;
+UPDATE CLMTRNS_&c._scorecard t
+SET GROSS_AMT = CURRENCY_AMT/0.48, GROSS_AMT_flag = 1
+WHERE DUE_DATE > MDY(1,1,2011)
+AND DUE_DATE < MDY(9,10,2011)
+AND (SELECT COVER FROM DATA2.&c._CLMHDR WHERE &c._CLMHDR.CLA_CASE_NO = t.CLA_CASE_NO) LIKE "D%";
+QUIT;
+%END;
+
+
+/*A3 Datacorrect*/
+
+/*France is divided up into more detailed subsets. To do this split, more informtation is needed about the claims.
+ In GCF and PA, the fixed amount is stored in a column called C32*/
+
+%IF &c. = FR %THEN %DO;
+
+PROC SQL;
+	CREATE TABLE CLMHDR_&c._Scorecard as 
+	SELECT
+			h.*,
+			s.PAYMENT_BENEFIT FORMAT = $17. as CLAIM_PAYMENT_BASIS,
+			s.PRODUCT_TYPE FORMAT = $20. as PRODUCT_TYPE,
+			s.RESERVE_PRODUCT_TYPE FORMAT = $8. as RESERVE_PRODUCT_TYPE,
+			s.SUB_PRODUCT FORMAT = $20. as SUB_PRODUCT
+			/*input(substrn(h.GPLUS_CLAIM_NO,3,9),9.) length = 5 as GCLMNO,
+			input(substrn(h.GPLUS_CLAIM_NO,13,3),3.) length = 3 as GCLSQ,
+			substrn(h.GPLUS_CLAIM_NO,1,1) length = 1 as GOCOV,
+			substrn(h.GROUP_POL_NO,1,4) as GRP_POL_4*/
+	FROM CLMHDR_&c._Scorecard h
+	LEFT JOIN SCHEME_DATABASE_&c. s ON (h.COVER = s.COVER_TYPE and h.PROD_ID = s.scheme)
+	ORDER BY CLA_CASE_NO;
+QUIT;
+
+/*PROC SQL;
+UPDATE CLMHDR_&c._scorecard
+SET AGENT_LOAN_AGR_NO_flag = 1
+WHERE AGENT_LOAN_AGR_NO is null;
+QUIT;
+*/
+%END;
+
+%ELSE %IF &c. = UK  %THEN %DO;
+
+DATA CLMHDR_&c._Scorecard;
+SET CLMHDR_&c._Scorecard;
+	FXD_AMT = C32;
+    DROP C32;
+    RUN;
+%END;
+%ELSE %DO;
+%END;
+
+
+/*Here we specify the reserve group for each claim. France has a more complicated query to deal with the
+additional reserve groups*/
+
+%IF &c. = FR %THEN %DO;
+PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET Rsrv_Grp = (SELECT Reserve_group_spec_&c..Rsrv_Grp FROM Reserve_group_spec_&c.
+		WHERE (h.COVER=Reserve_group_spec_&c..Cvr_Typ
+		AND h.RESERVE_PRODUCT_TYPE=Reserve_group_spec_&c..Prdct_Typ
+		AND h.SUB_PRODUCT=Reserve_group_spec_&c..Sub_Prdct
+		AND h.CLAIM_PAYMENT_BASIS=Reserve_group_spec_&c..Clm_Pymnt_Basis))
+		WHERE h.SUB_PRODUCT = "MORTGAGE"
+		;
+QUIT;
+PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET Rsrv_Grp = (SELECT Reserve_group_spec_&c..Rsrv_Grp FROM Reserve_group_spec_&c.
+		WHERE (h.COVER=Reserve_group_spec_&c..Cvr_Typ
+		AND h.RESERVE_PRODUCT_TYPE=Reserve_group_spec_&c..Prdct_Typ
+		AND Reserve_group_spec_&c..Sub_Prdct = ""
+		AND h.CLAIM_PAYMENT_BASIS=Reserve_group_spec_&c..Clm_Pymnt_Basis))
+		WHERE h.SUB_PRODUCT ne "MORTGAGE"
+		;
+QUIT;
+%END;
+
+%ELSE %DO;
+
+PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET Rsrv_Grp = (SELECT Reserve_group_spec_&c..Rsrv_Grp FROM Reserve_group_spec_&c. 
+		WHERE h.COVER=Reserve_group_spec_&c..Cvr_Typ)
+		WHERE h.COVER IN (SELECT Reserve_group_spec_&c..Cvr_Typ FROM Reserve_group_spec_&c.)
+		;
+QUIT;
+
+%END;
+
+*Puts any remaining claims into a different reserve group ZZ1;
+
+data CLMHDR_&c._Scorecard;
+	set CLMHDR_&c._Scorecard;
+	if "" = Rsrv_Grp then Rsrv_Grp = "ZZ1";
+	else Rsrv_Grp = Rsrv_Grp;
+run;
+
+/*S1-S7 are Santander business that is now reserved off system using bordereau.
+H1-H6, HPA are Hispamer business that is now reserved off system using bordereau*/
+%IF &c. = ES %THEN %DO;
+
+Proc Sql;
+Update CLMHDR_&c._Scorecard 
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme Like "H1%"
+OR Scheme Like "H2%"
+OR Scheme Like "H3%"
+OR Scheme Like "H4%"
+OR Scheme Like "H5%"
+OR Scheme Like "H6%"
+OR Scheme Like "HPA%"
+OR Scheme Like "S1%"
+OR Scheme Like "S2%"
+OR Scheme Like "S3%"
+OR Scheme Like "S4%"
+OR Scheme Like "S5%"
+OR Scheme Like "S6%"
+OR Scheme Like "S7%";
+Quit;
+%END;
+
+/*Linea schemes are reserved by loss ratio*/
+
+%IF &c. =IT %THEN %DO;
+Proc Sql;
+Update CLMHDR_&c._Scorecard 
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme Like "LN1%";
+Quit;
+%END;
+
+/*Norway TERRA schemes are excluded*/
+
+%IF &c. =NO %THEN %DO;
+Proc Sql;
+Update CLMHDR_&c._Scorecard 
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme IN("TA.1","TB.1","TC.1","TD.1","TE.1","TF.1","TG.1","TH.1","TI.1","TJ.1");
+Quit;
+%END;
+
+/*From Q3 2012 some claims started being classified under dummy schemes 8A.1 and ZA.1 due to them being in bulk and not having an 
+identifiable scheme.  These should not have reserves.*/
+
+
+%IF &c. =SE %THEN %DO;
+Proc Sql;
+Update CLMHDR_&c._Scorecard 
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme Like "ZA.%" ;
+Quit;
+%END;
+
+%ELSE %DO;
+Proc Sql;
+Update CLMHDR_&c._Scorecard 
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme Like "8A.%";
+Quit;
+%END;
+
+/* Capital One UK contract and run-off period ended on 27th November 2013*/
+
+%IF &c. = UK %THEN %DO;
+Proc Sql;
+Update CLMHDR_&c._Scorecard 
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme Like "CFA%" OR SCHEME Like "CFN%";
+Quit;
+%END;
+
+/* Ceasing business with the client DLFA in Denmark from 01/04/14 - 
+All claims then paid by client including those which are outstanding*/
+
+%IF &c. = DK %THEN %DO;
+Proc Sql;
+Update CLMHDR_&c._Scorecard 
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme Like "Q%";
+Quit;
+%END;
+
+/* Some Greek schemes have run off more than 12 months ago and terms and conditions 
+   don’t allow for claims 12 month after insurance period. Added by DP 23/07/2014*/
+
+%IF &c. = GR %THEN %DO;
+Proc Sql;
+Update Clmhdr_&c._Scorecard 
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme IN ("BPI.1","BPJ.1","BPK.1","BPL.1","BPM.1","EM1.1","EM2.1","GM1.1");
+Quit;
+%END;
+
+
+/*We had some German contracts that were terminated as part of project bounce.
+We were required to pay claims up to a certain period. That period has now lapsed. Added by DP 23/07/2014*/
+
+%IF &c. = DE %THEN %DO;
+Proc Sql;
+Update CLMHDR_&c._Scorecard 
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme IN ("P4.2","P4.3");
+Quit;
+%END;
+
+/*Irish Santander schemes nearly run-off. Added by DP 03/11/2014*/
+
+%IF &c. = IE %THEN %DO;
+Proc Sql;
+Update Clmhdr_&c._Scorecard  
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme IN ("EV.3","EV.4");
+Quit;
+%END;
+
+/*Switzerland Cembra schemes where the max number of payments had changed to 9 payments, but which hadn't been configured 
+in TIA. Information as to what schemes this applied to was taken from Taneem, and the email trail can be found saved here:
+G:/Invest/RESERVES/International/ALL/RESULTS/201610/Cembra.msg
+
+Added by TD 01/11/2016*/
+
+%IF &c. = CH %THEN %DO;
+Proc sql;
+Update Clmhdr_&c._Scorecard 
+set MAX_NO_OF_PAYMENTS_flag = 1
+where scheme in ("GO.1", "GN.1", "G9.1", "G9.2", "G9.3", "G9.4",
+"G3.1", "G3.2", "G3.3", "G3.4", "G6.1", "G6.2", "G6.3", "GL.1", "GM.1") and year(Notification_Date) > 2014
+and MAX_NO_OF_PAYMENTS = 12 ;
+Quit;
+%END;
+
+
+/* Added 08/06/2017 to deal with 501/502 uw codes. */ 
+/* Germany and turkey are only country which have these codes at time of writing, Underwriting company 501/502 need not be evaluated, so remove. */
+
+Proc Sql;
+Update Clmhdr_&c._Scorecard  
+Set Rsrv_Grp = "ZZ2"
+WHERE UW_Company IN ('501','502');
+Quit;
+
+
+/* Some France UGIP claims on TIA but full history not loaded so continue reserving off-system . Added by DP 18/09/2014*/
+
+/*%IF &c. = FR or &c. = FR_FR_GAAP %THEN %DO;
+Proc Sql;
+Update Clmhdr_&c._Scorecard  
+Set Rsrv_Grp = "ZZ2"
+WHERE Scheme like "UG1%" or scheme like "UG6%" or scheme like "UG7%" or scheme like "UG8%" 
+or scheme like "UG9%" or scheme like "UGC%" or scheme like "UGD%" or scheme like "UGG%" 
+or scheme like "UGH%" or scheme like "UGI%" or scheme like "UGN%";
+Quit;
+%END;
+*/
+
+/* France claim with wrong scheme. Added by DP 18/08/2015 */
+
+%IF &c. = FR or &c. = FR_FR_GAAP %THEN %DO;
+Proc Sql;
+Update Clmhdr_&c._Scorecard  
+Set Scheme = "EFD.1", scheme_flag = 1
+WHERE cla_case_no = 1050126;
+Quit;
+%END;
+
+/* Portugal Fidelidade Schemes loaded onto TIA but with wrong open date.  Set to notification date.
+One-off adjustment for 2015Q3. Added by DP 18/08/2015 */
+
+%IF &c. = PT %THEN %DO;
+
+Proc Sql;
+Update Clmhdr_&c._Scorecard  
+Set First_Open_Date = Notification_Date, FIRST_OPEN_DATE_flag = 1
+WHERE Scheme like "XAM%" or Scheme like "XAN%";
+Quit;
+
+%END;
+
+/* GMAC germany transfer of disability to FACL.  Not corrected on TIA so correect UW code */
+
+%IF &c. = FR or &c. = FR_FR_GAAP %THEN %DO;
+
+Proc Sql;
+Update Clmhdr_&c._Scorecard 
+Set UW_Company = '102' , UW_COMPANY_flag = 1
+WHERE Scheme like "1%" and Cover like "D%";
+Quit;
+
+%END;
+
+
+/*Corrects the claim monthly benefit for Portugal BES products BO1, BO2 and BO3.
+Version 1 of these products all have the salary entered in the 
+rental/policy monthly benefit field and need to be scaled down to the following benefit levels:
+35% for BO1 and BO2
+50% for BO3*/
+
+%IF &c. = PT %THEN %DO;
+PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard  h
+		SET POLICY_MONTHLY_BENEFIT = min(500,0.35*POLICY_MONTHLY_BENEFIT), MONTHLY_BENEFIT_flag=1
+		WHERE SCHEME like "BO1%";
+QUIT;
+PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard  h
+		SET POLICY_MONTHLY_BENEFIT = min(1075,0.35*POLICY_MONTHLY_BENEFIT), MONTHLY_BENEFIT_flag=1
+		WHERE SCHEME like "BO2%";
+QUIT;
+PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET POLICY_MONTHLY_BENEFIT = min(1075,0.5*POLICY_MONTHLY_BENEFIT), MONTHLY_BENEFIT_flag=1
+		WHERE SCHEME like "BO3%";
+QUIT;
+%END;
+
+/*Denmark, Finland and Netherlands all have benefits paid post-tax. We need to reserve for the full
+amount of benefit paid + tax. Therefore take the payment as the gross amount. Else we just take the 
+amount paid as the normal currency amount.*/
+
+%IF &c. = DK or &c.= FI or &c. = NL %THEN %DO;
+PROC SQL;
+		UPDATE CLMTRNS_&c._Scorecard
+		SET CURRENCY_AMT = GROSS_AMT, CURRENCY_AMT_flag = 1;
+QUIT;
+%END;
+
+/* Switzerland Lighthouse Scheme GO.1 has a fixed living expense of 500
+for every month on top of the benefit, but the 500 is populated 
+in claim_monthly_benefit and the benefit in policy_monthly_benefit.  
+Currently logged with IT to fix 
+
+%IF &c. = CH %THEN %DO;
+PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard
+		SET CLAIM_MONTHLY_BENEFIT = (POLICY_MONTHLY_BENEFIT + 500), MONTHLY_BENEFIT_flag = 1
+		WHERE SCHEME = "GO.1";
+QUIT;
+%END;*/
+
+/*Finds the monthly benefit and the close date for claims in CLMHDR.
+We take the monthly benefit from the Clmhdr file in the following order of preference:
+CLAIM_MONTHLY_BENEFIT then POLICY_MONTHLY_BENEFIT then rental.
+If the claim is closed, then we take the close date in the following order of preference:
+RECLOSE_DATE then CLOSE_DATE.
+The RECLOSE_DATE should only be non-null if the claim has been re-opened and closed again, and
+so the majority of claims will receive CLOSE_DATE as the close date.*/
+
+Data CLMHDR_&c._Scorecard;
+		set CLMHDR_&c._Scorecard;
+		if CLAIM_MONTHLY_BENEFIT ne 0 and CLAIM_MONTHLY_BENEFIT ne .
+		then	MONTHLY_BENEFIT=CLAIM_MONTHLY_BENEFIT;
+		else if POLICY_MONTHLY_BENEFIT ne 0 and POLICY_MONTHLY_BENEFIT ne .
+		then	MONTHLY_BENEFIT=POLICY_MONTHLY_BENEFIT;
+		else MONTHLY_BENEFIT = RENTAL;
+		if RECLOSE_DATE ne .
+		then CLOSE_DATE=RECLOSE_DATE;
+		else if FIRST_CLOSE_DATE ne .
+		then CLOSE_DATE=FIRST_CLOSE_DATE;
+		else CLOSE_DATE=.;
+		drop CLAIM_MONTHLY_BENEFIT POLICY_MONTHLY_BENEFIT RENTAL;
+		FORMAT CLOSE_DATE ddmmyy10.;
+run;
+
+/*Delete monthly bene for BCC to avoid distorting averages.
+WARNING: This should only have been a temporary query added by PaulC*/
+
+%IF &c. = UK %THEN %DO;
+PROC SQL;
+		UPDATE Clmhdr_&c._Scorecard
+		SET MONTHLY_BENEFIT = ., MONTHLY_BENEFIT_flag = 1
+		WHERE BCC_Flag = "BCC";
+QUIT;
+%END;
+
+/*For Turkey we update the CLMHDR OUTSTANDING_LIFE_BALANCE with OUTSTANDING_NONLIFE BALANCE where
+the OUTSTANDING_LIFE_BALANCE is null. No flag needed as this isnt actually an adjustment to figures*/
+
+%IF &c. = TR or &c. = TR_G or &c. = TR_ISBank %THEN %DO;
+
+
+PROC SQL;
+		UPDATE Clmhdr_&c._Scorecard
+		SET OUTSTANDING_LIFE_BALANCE = OUTSTANDING_NONLIFE_BALANCE
+		WHERE OUTSTANDING_LIFE_BALANCE =.;
+QUIT;
+
+%END;
+
+/*Creates a table of claims in CLMTRNS with the final transaction date and total amount paid
+from CLMTRNS, plus first open date, first close date, reopen date, reclose date, close date and status from CLMHDR.
+There is a filter here on ITEM_CLASS: I dont know what this is for but will receive an e-mail soon from 
+Daly, Iomhar (Genworth) explaining it.*/
+PROC SQL;
+		CREATE TABLE CLAIMS_IN_CLMTRNS_&c. as 
+		SELECT UNIQUE t.CLA_CASE_NO, max(t.TRANS_DATE) format=ddmmyy10. as TRANS_DATE, h.FIRST_OPEN_DATE,
+		h.FIRST_CLOSE_DATE, h.REOPEN_DATE, h.RECLOSE_DATE, h.CLOSE_DATE, h.STATUS, 
+		SUM(-CURRENCY_AMT) as AMT
+		FROM Clmtrns_&c._Scorecard t
+		INNER JOIN Clmhdr_&c._Scorecard h ON (h.CLA_CASE_NO = t.CLA_CASE_NO)
+		WHERE t.ITEM_CLASS in (2,3,4)
+		GROUP BY t.CLA_CASE_NO, h.FIRST_OPEN_DATE, h.FIRST_CLOSE_DATE, h.REOPEN_DATE, h.RECLOSE_DATE,
+		h.CLOSE_DATE, h.STATUS;
+QUIT;
+
+
+/*Correction for monthly benefits outside limits.*/
+
+ PROC SQL;
+		 UPDATE CLMHDR_&c._Scorecard h
+		 SET Monthly_Benefit_Flag = 1
+         WHERE (h.MONTHLY_BENEFIT < (SELECT Mnthly_bnft_limits_&c..LOWER FROM Mnthly_bnft_limits_&c. WHERE h.Rsrv_Grp = Mnthly_bnft_limits_&c..Rsrv_Grp)
+		 OR h.MONTHLY_BENEFIT > (SELECT Mnthly_bnft_limits_&c..UPPER FROM Mnthly_bnft_limits_&c. WHERE h.Rsrv_Grp = Mnthly_bnft_limits_&c..Rsrv_Grp)
+		 OR h.MONTHLY_BENEFIT = .)
+         AND h.STATUS in ("OP","RO");
+
+QUIT;
+
+/*Make a table of claims with monthly benefits outside limits. */
+
+
+PROC SQL;
+		CREATE TABLE MNTHLY_BNFT_CORR_&c. as 
+		SELECT h.CLA_CASE_NO, h.Rsrv_Grp, h.Prod_Id, h.SCHEME, h.COVER, h.MONTHLY_BENEFIT,
+		0.00001 as Mnthly_Bnft_Corr, h.STATUS
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN Mnthly_bnft_limits_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE (h.MONTHLY_BENEFIT < m.LOWER
+		or h.MONTHLY_BENEFIT > m.UPPER
+		or h.MONTHLY_BENEFIT = .)
+		AND h.STATUS in ("OP","RO");
+QUIT;
+
+/*Make average benefit by product. For UK this is done at scheme level. Consider removal of UK exception.*/
+%IF &c. = UK  %THEN %DO;
+PROC SQL;
+		CREATE TABLE MTHLY_BNFT_AVG_PRDCT_&c. as 
+		SELECT h.Rsrv_Grp, h.Scheme, count(h.CLA_CASE_NO) as COUNT, MEAN(h.MONTHLY_BENEFIT) as AVG_MONTHLY_BENEFIT,
+		STD(h.MONTHLY_BENEFIT) as STD_MONTHLY_BENEFIT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN Mnthly_bnft_limits_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE h.MONTHLY_BENEFIT > m.LOWER
+		AND h.MONTHLY_BENEFIT < m.UPPER
+		GROUP BY h.Rsrv_Grp, h.Scheme;
+QUIT;
+%END;
+
+%ELSE %DO;
+PROC SQL;
+		CREATE TABLE MTHLY_BNFT_AVG_PRDCT_&c. as 
+		SELECT h.Rsrv_Grp, h.Prod_Id, count(h.CLA_CASE_NO) as COUNT, MEAN(h.MONTHLY_BENEFIT) as AVG_MONTHLY_BENEFIT,
+		STD(h.MONTHLY_BENEFIT) as STD_MONTHLY_BENEFIT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN Mnthly_bnft_limits_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE h.MONTHLY_BENEFIT > m.LOWER
+		AND h.MONTHLY_BENEFIT < m.UPPER
+		GROUP BY h.Rsrv_Grp, h.Prod_Id;
+QUIT;
+%END;
+
+/*Make average benefit by group.*/
+PROC SQL;
+		CREATE TABLE MNTHLY_BNFT_AVRG_GRP_&c. as 
+		SELECT h.Rsrv_Grp, count(h.CLA_CASE_NO) as COUNT, MEAN(h.MONTHLY_BENEFIT) as AVG_MONTHLY_BENEFIT,
+		STD(h.MONTHLY_BENEFIT) as STD_MONTHLY_BENEFIT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN Mnthly_bnft_limits_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE h.MONTHLY_BENEFIT > m.LOWER
+		AND h.MONTHLY_BENEFIT < m.UPPER
+		GROUP BY h.Rsrv_Grp;
+QUIT;
+
+/*Correct the average monthly benefit. UK needs a different statement to take account of the fact that
+it uses scheme rather than product for the average. Consider removal of UK change*/
+
+%IF &c. = UK  %THEN %DO;
+PROC SQL;
+		CREATE TABLE MNTHLY_BNFT_CORR_&c. as 
+		SELECT UNIQUE c.CLA_CASE_NO, c.Rsrv_Grp, c.Prod_Id, c.SCHEME, c.COVER, c.MONTHLY_BENEFIT as OLD_MONTHLY_BENEFIT,
+		case when p.COUNT>9 then p.Avg_Monthly_Benefit
+		else g.Avg_Monthly_Benefit end as MONTHLY_BENEFIT,
+		c.STATUS
+		FROM MNTHLY_BNFT_CORR_&c. c
+		LEFT JOIN MTHLY_BNFT_AVG_PRDCT_&c. p
+		ON (c.SCHEME = p.SCHEME and c.Rsrv_Grp = p.Rsrv_Grp)
+		LEFT JOIN MNTHLY_BNFT_AVRG_GRP_&c. g
+		ON (c.Rsrv_Grp = g.Rsrv_Grp)
+		Order BY c.CLA_CASE_NO;
+QUIT;
+
+PROC SQL;
+Create Table CLMHDR_&c._Scorecard as 
+select * 
+from CLMHDR_&c._Scorecard
+Order By CLA_CASE_NO;
+Quit;
+
+
+DATA CLMHDR_&c._Scorecard;
+		UPDATE CLMHDR_&c._Scorecard MNTHLY_BNFT_CORR_&c.;
+		BY CLA_CASE_NO;
+		DROP OLD_MONTHLY_BENEFIT;
+RUN;
+%END;
+
+%ELSE %DO;
+PROC SQL;
+		CREATE TABLE MNTHLY_BNFT_CORR_&c. as 
+		SELECT UNIQUE c.CLA_CASE_NO, c.Rsrv_Grp, c.Prod_Id, c.SCHEME, c.COVER, c.MONTHLY_BENEFIT as OLD_MONTHLY_BENEFIT,
+		case when p.COUNT>9 then p.Avg_Monthly_Benefit
+		else g.Avg_Monthly_Benefit end as MONTHLY_BENEFIT,
+		c.STATUS
+		FROM MNTHLY_BNFT_CORR_&c. c
+		LEFT JOIN MTHLY_BNFT_AVG_PRDCT_&c. p
+		ON (c.Prod_Id = p.Prod_Id and c.Rsrv_Grp = p.Rsrv_Grp)
+		LEFT JOIN MNTHLY_BNFT_AVRG_GRP_&c. g
+		ON (c.Rsrv_Grp = g.Rsrv_Grp)
+		ORDER BY c.CLA_CASE_NO;
+QUIT;
+
+PROC SQL;
+Create Table CLMHDR_&c._Scorecard as 
+select * 
+from CLMHDR_&c._Scorecard
+Order By CLA_CASE_NO;
+Quit;
+
+DATA CLMHDR_&c._Scorecard;
+		UPDATE CLMHDR_&c._Scorecard MNTHLY_BNFT_CORR_&c.;
+		BY CLA_CASE_NO;
+		DROP OLD_MONTHLY_BENEFIT;
+RUN;
+%END;
+
+
+
+/*Multiply the monthly benefit by some factor in France. WARNING: REASON UNKNOWN
+Update OUTSTANDING_LIFE_BALANCE with OUTSTANDING_NONLIFE_BALANCE where the OUTSTANDING_LIFE_BALANCE is null or 
+zero.*/
+
+%IF &c. = FR %THEN %DO;
+PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET MONTHLY_BENEFIT =
+		MONTHLY_BENEFIT*(SELECT BEN_POUC_&c..PRCTG_BEN FROM BEN_POUC_&c. WHERE h.GPLUS_CLAIM_NO = BEN_POUC_&c..GB_CLM)/100,
+        Monthly_Benefit_Flag = 1
+		
+		WHERE GPLUS_CLAIM_NO IN (SELECT BEN_POUC_&c..GB_CLM FROM BEN_POUC_&c.);
+QUIT;
+
+PROC SQL;
+		UPDATE Clmhdr_&c._Scorecard
+		SET OUTSTANDING_LIFE_BALANCE = OUTSTANDING_NONLIFE_BALANCE
+		WHERE OUTSTANDING_LIFE_BALANCE in (.,0);
+QUIT;
+
+%END;
+
+/*The BCC flag indicates claims on a credit card where if the claimant claims they will receive
+2% of the outstanding balance on the credit card in month 1, 2% in month 2 and 96% in month 3.
+This outstanding balance appears in the OUTSTANDING_NONLIFE_BALANCE column.*/
+
+%IF &c. = UK  %THEN %DO;
+PROC SQL;
+		UPDATE Clmhdr_&c._Scorecard 
+		SET OUTSTANDING_LIFE_BALANCE = OUTSTANDING_NONLIFE_BALANCE
+		WHERE BCC_Flag = "BCC";
+QUIT;
+%END;
+
+/*Correction for outstanding balance outside limits.*/
+
+        PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET OUTSTANDING_BALANCE_flag = 1
+        WHERE (h.OUTSTANDING_LIFE_BALANCE < (SELECT OS_BLNC_LIMITS_&c..LOWER from OS_BLNC_LIMITS_&c. WHERE h.Rsrv_Grp = OS_BLNC_LIMITS_&c..Rsrv_Grp)
+		OR h.OUTSTANDING_LIFE_BALANCE > (SELECT OS_BLNC_LIMITS_&c..UPPER from OS_BLNC_LIMITS_&c. WHERE h.Rsrv_Grp = OS_BLNC_LIMITS_&c..Rsrv_Grp)
+		OR h.OUTSTANDING_LIFE_BALANCE is null) AND h.STATUS in ("OP","RO");
+		QUIT;
+
+/*Again, UK corrects average benefit at scheme rather than product level.*/
+
+%IF &c. = UK  %THEN %DO;
+PROC SQL;
+		CREATE TABLE OS_BLNC_CORR_&c. as 
+		SELECT UNIQUE h.CLA_CASE_NO, h.Rsrv_Grp, h.Prod_Id, h.SCHEME, h.COVER, h.OUTSTANDING_LIFE_BALANCE,
+		0.00001 as Otstndng_Balnc_Corr, h.STATUS
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN OS_blnc_limits_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE STATUS in ("OP","RO")
+		and (h.OUTSTANDING_LIFE_BALANCE < m.LOWER
+		or h.OUTSTANDING_LIFE_BALANCE > m.UPPER
+		or h.OUTSTANDING_LIFE_BALANCE is null);
+QUIT;
+
+PROC SQL;
+		CREATE TABLE OS_BLNC_AVRG_PRDCT_&c. as 
+		SELECT UNIQUE h.Rsrv_Grp, h.Prod_Id, h.SCHEME, count(h.CLA_CASE_NO) as COUNT, MEAN(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
+		FROM Claims_in_clmtrns_&c. t
+		INNER JOIN Clmhdr_&c._Scorecard h
+		ON (t.CLA_CASE_NO = h.CLA_CASE_NO)
+		INNER JOIN OS_blnc_limits_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE t.AMT > m.LOWER
+		AND t.AMT < m.UPPER
+		AND t.AMT ne .
+		GROUP BY m.Rsrv_Grp, h.SCHEME;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE OS_BLNC_AVRG_GRP_&c. as 
+		SELECT UNIQUE h.Rsrv_Grp, count(h.CLA_CASE_NO) as COUNT, MEAN(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
+		FROM Claims_in_clmtrns_&c. t
+		INNER JOIN Clmhdr_&c._Scorecard h
+		ON (t.CLA_CASE_NO = h.CLA_CASE_NO)
+		INNER JOIN OS_blnc_limits_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE t.AMT > m.LOWER
+		AND t.AMT < m.UPPER
+		AND t.AMT ne .
+		GROUP BY m.Rsrv_Grp;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE OS_blnc_corr_&c. as 
+		SELECT UNIQUE c.CLA_CASE_NO, c.Rsrv_Grp, c.Prod_Id, c.SCHEME, c.COVER, c.OUTSTANDING_LIFE_BALANCE as OLD_OUTSTANDING_LIFE_BALANCE,
+		case when p.COUNT>9 then p.AVG_AMT
+			 else g.AVG_AMT end as OUTSTANDING_LIFE_BALANCE,
+		c.STATUS
+		FROM OS_blnc_corr_&c. c
+		LEFT JOIN OS_BLNC_AVRG_PRDCT_&c. p
+		ON (c.SCHEME = p.SCHEME and c.Rsrv_Grp = p.Rsrv_Grp)
+		LEFT JOIN OS_BLNC_AVRG_GRP_&c. g
+		ON (c.Rsrv_Grp = g.Rsrv_Grp)
+		ORDER BY c.CLA_CASE_NO;
+QUIT;
+%END;
+
+%ELSE %DO;
+PROC SQL;
+		CREATE TABLE OS_BLNC_CORR_&c. as 
+		SELECT UNIQUE h.CLA_CASE_NO, h.Rsrv_Grp, h.Prod_Id, h.SCHEME, h.COVER, h.OUTSTANDING_LIFE_BALANCE,
+		0.00001 as Otstndng_Balnc_Corr, h.STATUS
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN OS_blnc_limits_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE STATUS in ("OP","RO")
+		and (h.OUTSTANDING_LIFE_BALANCE < m.LOWER
+		or h.OUTSTANDING_LIFE_BALANCE > m.UPPER
+		or h.OUTSTANDING_LIFE_BALANCE is null);
+QUIT;
+
+PROC SQL;
+		CREATE TABLE OS_BLNC_AVRG_PRDCT_&c. as 
+		SELECT UNIQUE h.Rsrv_Grp, h.Prod_Id, count(h.CLA_CASE_NO) as COUNT, MEAN(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
+		FROM Claims_in_clmtrns_&c. t
+		INNER JOIN Clmhdr_&c._Scorecard h
+		ON (t.CLA_CASE_NO = h.CLA_CASE_NO)
+		INNER JOIN OS_blnc_limits_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE t.AMT > m.LOWER
+		AND t.AMT < m.UPPER
+		AND t.AMT ne .
+		GROUP BY m.Rsrv_Grp, h.Prod_Id;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE OS_BLNC_AVRG_GRP_&c. as 
+		SELECT UNIQUE h.Rsrv_Grp, count(h.CLA_CASE_NO) as COUNT, MEAN(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
+		FROM Claims_in_clmtrns_&c. t
+		INNER JOIN Clmhdr_&c._Scorecard h
+		ON (t.CLA_CASE_NO = h.CLA_CASE_NO)
+		INNER JOIN OS_blnc_limits_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE t.AMT > m.LOWER
+		AND t.AMT < m.UPPER
+		AND t.AMT ne .
+		GROUP BY m.Rsrv_Grp;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE OS_blnc_corr_&c. as 
+		SELECT UNIQUE c.CLA_CASE_NO, c.Rsrv_Grp, c.Prod_Id, c.SCHEME, c.COVER, c.OUTSTANDING_LIFE_BALANCE as OLD_OUTSTANDING_LIFE_BALANCE,
+		case when p.COUNT>9 then p.AVG_AMT
+			 else g.AVG_AMT end as OUTSTANDING_LIFE_BALANCE,
+		c.STATUS
+		FROM OS_blnc_corr_&c. c
+		LEFT JOIN OS_BLNC_AVRG_PRDCT_&c. p
+		ON (c.Prod_Id = p.Prod_Id and c.Rsrv_Grp = p.Rsrv_Grp)
+		LEFT JOIN OS_BLNC_AVRG_GRP_&c. g
+		ON (c.Rsrv_Grp = g.Rsrv_Grp)
+		ORDER BY c.CLA_CASE_NO;
+QUIT;
+%END;
+
+proc sort data=CLMHDR_&c._Scorecard ; 
+ by CLA_CASE_NO ; 
+run;
+
+proc sort data=OS_blnc_corr_&c. ; 
+ by CLA_CASE_NO ; 
+run;
+
+
+DATA CLMHDR_&c._Scorecard;
+		UPDATE CLMHDR_&c._Scorecard OS_blnc_corr_&c.;
+		BY CLA_CASE_NO;
+		DROP OLD_OUTSTANDING_LIFE_BALANCE;
+RUN;
+
+
+/*Some countries use fixed amount averages as the benefit.  Countries involved are FR, UK_PA and UK_GCF.*/
+
+%IF &c. = FR %THEN %DO;
+
+        PROC SQL;
+        UPDATE CLMHDR_&c._Scorecard h
+		SET OUTSTANDING_BALANCE_flag = 1
+        WHERE h.STATUS in ("OP","RO") and CLAIM_PAYMENT_BASIS = "Fixed_Amount";
+		QUIT;
+
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_AVRG_PRDCT_&c. as 
+		SELECT UNIQUE CLAIM_PAYMENT_BASIS, Rsrv_Grp, Prod_Id,
+		COUNT(h.CLA_CASE_NO) as COUNT, mean(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN Claims_in_clmtrns_&c. t
+		ON (h.CLA_CASE_NO = t.CLA_CASE_NO)
+		WHERE Year(h.INCIDENT_DATE)>2006
+		AND CLAIM_PAYMENT_BASIS = "Fixed_Amount"
+		GROUP BY CLAIM_PAYMENT_BASIS, Rsrv_Grp, Prod_Id;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_AVRG_GRP_POL4_&c. as 
+		SELECT UNIQUE CLAIM_PAYMENT_BASIS, Rsrv_Grp, GRP_POL_4,
+		COUNT(h.CLA_CASE_NO) as COUNT, mean(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN Claims_in_clmtrns_&c. t
+		ON (h.CLA_CASE_NO = t.CLA_CASE_NO)
+		WHERE Year(h.INCIDENT_DATE) >= 2006
+		AND CLAIM_PAYMENT_BASIS = "Fixed_Amount"
+		GROUP BY CLAIM_PAYMENT_BASIS, Rsrv_Grp,  GRP_POL_4;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_AVRG_GRP_&c. as 
+		SELECT UNIQUE CLAIM_PAYMENT_BASIS, Rsrv_Grp,
+		COUNT(h.CLA_CASE_NO) as COUNT, mean(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN Claims_in_clmtrns_&c. t
+		ON (h.CLA_CASE_NO = t.CLA_CASE_NO)
+		WHERE Year(h.INCIDENT_DATE) = 2008
+		AND CLAIM_PAYMENT_BASIS = "Fixed_Amount"
+		GROUP BY CLAIM_PAYMENT_BASIS, Rsrv_Grp;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_CORR_&c. as 
+		SELECT UNIQUE h.CLA_CASE_NO, h.CLAIM_PAYMENT_BASIS, h.Rsrv_Grp,
+		h.GRP_POL_4, h.PRODUCT_TYPE, h.SUB_PRODUCT,
+		case when s.COUNT > 50 then s.AVG_AMT
+		when (s.COUNT < 50 and p.AVG_AMT is not null) then p.AVG_AMT
+		else g.AVG_AMT end as OUTSTANDING_LIFE_BALANCE,
+		h.SCHEME, h.COVER, h.STATUS
+		from Clmhdr_&c._Scorecard h
+		left join FIXED_AMT_AVRG_PRDCT_&c. s on (s.Prod_Id = h.Prod_Id and s.Rsrv_Grp = h.Rsrv_Grp)
+		left join FIXED_AMT_AVRG_GRP_POL4_&c. p on (p.GRP_POL_4 = h.GRP_POL_4 and s.Rsrv_Grp = h.Rsrv_Grp)
+		left join FIXED_AMT_AVRG_GRP_&c. g on (g.Rsrv_Grp = h.Rsrv_Grp)
+		where h.STATUS in ("OP","RO")
+		and h.CLAIM_PAYMENT_BASIS = "Fixed_Amount";
+QUIT;
+
+DATA CLMHDR_&c._Scorecard;
+		UPDATE CLMHDR_&c._Scorecard FIXED_AMT_CORR_&c.;
+		BY CLA_CASE_NO;
+RUN;
+
+%END;
+
+%ELSE %IF &c. = UK  %THEN %DO;
+
+        PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET OUTSTANDING_BALANCE_flag = 1
+        WHERE (h.FXD_AMT < (SELECT FIXED_BNFT_LIMITS_&c..LOWER from FIXED_BNFT_LIMITS_&c. WHERE h.Rsrv_Grp = FIXED_BNFT_LIMITS_&c..Rsrv_Grp)
+		OR h.FXD_AMT > (SELECT FIXED_BNFT_LIMITS_&c..UPPER from FIXED_BNFT_LIMITS_&c. WHERE h.Rsrv_Grp = FIXED_BNFT_LIMITS_&c..Rsrv_Grp)
+		OR h.FXD_AMT =.) AND h.STATUS in ("OP","RO");
+		QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_AVRG_PRDCT_CASE_&c. as 
+		SELECT UNIQUE h.Rsrv_Grp, h.SCHEME, h.COVER,
+		COUNT(h.CLA_CASE_NO) as COUNT, mean(h.FXD_AMT) as AVG_AMT, STD(h.FXD_AMT) as STD_AMT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN FIXED_BNFT_LIMITS_&c. f
+		ON (f.Rsrv_Grp = h.Rsrv_Grp)
+		WHERE h.FXD_AMT > f.LOWER
+		AND h.FXD_AMT < f.UPPER
+		AND h.FXD_AMT ne .
+		GROUP BY h.Rsrv_Grp, h.SCHEME, h.COVER;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_AVRG_PRDCT_PAID_&c. as 
+		SELECT UNIQUE h.Rsrv_Grp, h.SCHEME, h.COVER,
+		COUNT(h.CLA_CASE_NO) as COUNT, mean(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN Claims_in_clmtrns_&c. t
+		ON (h.CLA_CASE_NO = t.CLA_CASE_NO)
+		WHERE h.STATUS = "CL"
+		GROUP BY h.Rsrv_Grp, h.SCHEME, h.COVER;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_AVRG_GRP_CASE_&c. as 
+		SELECT UNIQUE h.Rsrv_Grp, h.COVER,
+		COUNT(h.CLA_CASE_NO) as COUNT, mean(h.FXD_AMT) as AVG_AMT, STD(h.FXD_AMT) as STD_AMT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN FIXED_BNFT_LIMITS_&c. f
+		ON (f.Rsrv_Grp = h.Rsrv_Grp)
+		WHERE h.FXD_AMT > f.LOWER
+		AND h.FXD_AMT < f.UPPER
+		AND h.FXD_AMT ne .
+		GROUP BY h.Rsrv_Grp, h.COVER;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_AVRG_GRP_PAID_&c. as 
+		SELECT UNIQUE h.Rsrv_Grp, h.COVER,
+		COUNT(h.CLA_CASE_NO) as COUNT, mean(h.FXD_AMT) as AVG_AMT, STD(h.FXD_AMT) as STD_AMT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN FIXED_BNFT_LIMITS_&c. f
+		ON (f.Rsrv_Grp = h.Rsrv_Grp)
+		WHERE h.FXD_AMT > f.LOWER
+		AND h.FXD_AMT < f.UPPER
+		AND h.FXD_AMT ne .
+		AND h.STATUS = "CL"
+		GROUP BY h.Rsrv_Grp, h.COVER;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_CORR_&c. as 
+		SELECT h.CLA_CASE_NO, h.Rsrv_Grp, h.Prod_Id, h.SCHEME, h.COVER, h.FXD_AMT,
+		0.00001 as FXD_AMT_Corr, h.STATUS
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN FIXED_BNFT_LIMITS_&c. m
+		ON (h.Rsrv_Grp = m.Rsrv_Grp)
+		WHERE (h.FXD_AMT < m.LOWER
+		or h.FXD_AMT > m.UPPER
+		or h.FXD_AMT = .)
+		AND h.STATUS in ("OP","RO");
+QUIT; 
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_CORR_&c. as 
+		SELECT UNIQUE c.CLA_CASE_NO, c.Rsrv_Grp, c.Prod_Id, c.SCHEME, c.COVER, c.FXD_AMT as OLD_FXD_AMT,
+		case
+		when p.COUNT>10 then p.Avg_Amt
+		when f.COUNT>10 then f.Avg_Amt
+		else g.Avg_Amt end as FXD_AMT,
+		c.STATUS
+		FROM FIXED_AMT_CORR_&c. c
+		LEFT JOIN FIXED_AMT_AVRG_PRDCT_CASE_&c. f
+		ON (c.SCHEME = f.SCHEME and c.Rsrv_Grp = f.Rsrv_Grp)
+		LEFT JOIN FIXED_AMT_AVRG_PRDCT_PAID_&c. p
+		ON (c.SCHEME = p.SCHEME and c.Rsrv_Grp = p.Rsrv_Grp)
+		LEFT JOIN FIXED_AMT_AVRG_GRP_CASE_&c. g
+		ON (c.Rsrv_Grp = g.Rsrv_Grp)
+		ORDER BY c.CLA_CASE_NO;
+QUIT;
+
+DATA CLMHDR_&c._Scorecard;
+		UPDATE CLMHDR_&c._Scorecard FIXED_AMT_CORR_&c.;
+		BY CLA_CASE_NO;
+		DROP OLD_FXD_AMT;
+RUN;
+
+PROC SQL;
+		UPDATE Clmhdr_&c._Scorecard
+		SET OUTSTANDING_LIFE_BALANCE = Fxd_Amt;
+QUIT;
+
+%END;
+
+%ELSE %IF &c. = UK  %THEN %DO;
+
+        PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard 
+		SET OUTSTANDING_BALANCE_flag = 1
+        WHERE RSRV_GRP in ("GM1","GM2");
+		QUIT;
+
+		PROC SQL;
+		CREATE TABLE FIXED_AMT_AVRG_PRDCT_&c. as 
+		SELECT UNIQUE h.Rsrv_Grp, h.SCHEME, h.COVER,
+		COUNT(h.CLA_CASE_NO) as COUNT, mean(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN Claims_in_clmtrns_&c. t
+		ON (h.CLA_CASE_NO = t.CLA_CASE_NO)
+		WHERE YEAR(h.INCIDENT_DATE) > 2007
+		AND COVER in ("CM","CP")
+		GROUP BY h.Rsrv_Grp, h.SCHEME, h.COVER;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_AVRG_GRP_&c. as 
+		SELECT UNIQUE h.Rsrv_Grp, h.COVER,
+		COUNT(h.CLA_CASE_NO) as COUNT, mean(t.AMT) as AVG_AMT, STD(t.AMT) as STD_AMT
+		FROM Clmhdr_&c._Scorecard h
+		INNER JOIN Claims_in_clmtrns_&c. t
+		ON (h.CLA_CASE_NO = t.CLA_CASE_NO)
+		WHERE YEAR(h.INCIDENT_DATE) > 2007
+		AND COVER in ("CM","CP")
+		GROUP BY h.Rsrv_Grp, h.COVER;
+QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_CORR_&c. as 
+		SELECT h.CLA_CASE_NO, h.Rsrv_Grp, h.Prod_Id, h.SCHEME, h.COVER, h.FXD_AMT,
+		0.00001 as FXD_AMT_Corr, h.STATUS
+		FROM Clmhdr_&c._Scorecard h
+		WHERE h.Cover in ("CM","CP","ME")
+		AND h.Rsrv_Grp in ("GM1","GM2");
+QUIT;
+
+PROC SQL;
+		CREATE TABLE FIXED_AMT_CORR_&c. as 
+		SELECT UNIQUE c.CLA_CASE_NO, c.Rsrv_Grp, c.Prod_Id, c.SCHEME, c.COVER, c.FXD_AMT,
+		case
+		when p.COUNT>10 then p.Avg_Amt
+		else g.Avg_Amt end as FXD_AMT_Corr,
+		c.STATUS
+		FROM FIXED_AMT_CORR_&c. c
+		LEFT JOIN FIXED_AMT_AVRG_PRDCT_&c. p
+		ON (c.SCHEME = p.SCHEME and c.Rsrv_Grp = p.Rsrv_Grp)
+		LEFT JOIN FIXED_AMT_AVRG_GRP_&c. g
+		ON (c.Rsrv_Grp = g.Rsrv_Grp)
+		ORDER BY c.CLA_CASE_NO;
+QUIT;
+
+data clmhdr_&c._Scorecard;
+update clmhdr_&c._Scorecard fixed_amt_corr_&c.;
+by CLA_CASE_NO;
+run;
+
+data clmhdr_&c._Scorecard;
+set clmhdr_&c._Scorecard;
+if RSRV_GRP in ("GM1","GM2")
+then outstanding_life_balance = FXD_AMT_CORR;
+run;
+
+
+%END;
+%ELSE %DO;
+%END;
+
+
+/*Make closed claims into an error code if there were no transactions on the claim according to CLMTRNS.
+Wouldnt it be better to make these claims into a decline?*/
+    
+
+		PROC SQL;
+	    CREATE TABLE ECDC_&c. as SELECT 
+        h.CLA_CASE_NO
+        FROM CLMHDR_&c._Scorecard h
+        LEFT JOIN Claims_in_clmtrns_&c. t ON (h.CLA_CASE_NO = t.CLA_CASE_NO)
+		WHERE h.STATUS = "CL" and t.CLA_CASE_NO =. ;
+        Quit;
+
+		PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET  Status = "EC", STATUS_flag = 1 
+        WHERE h.STATUS = "CL" and h.CLA_CASE_NO IN (SELECT ECDC_&c..CLA_CASE_NO from ECDC_&c.);
+        QUIT;
+
+        PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET  STATUS_flag = 1
+        WHERE STATUS = "EC";
+        QUIT;
+
+
+/*Change the reclose date to null when the status is reopened. This can occur if a claim has been reopened twice.*/
+
+        PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard
+		SET RECLOSE_DATE_flag = 1
+		WHERE STATUS = "RO" and Reclose_Date ne .;
+        QUIT;
+
+/*Correct CL to RO on Reopened claims with paids in the future.*/
+
+        PROC SQL;
+		CREATE TABLE CL_FUTURE_PAIDS_&c. as 
+		SELECT CLA_CASE_NO, TRANS_DATE, FIRST_OPEN_DATE, FIRST_CLOSE_DATE, REOPEN_DATE, RECLOSE_DATE, STATUS
+		FROM Claims_in_clmtrns_&c.
+		WHERE STATUS not in ("OP","RO") and TRANS_DATE > input(&Balancedate.,ddmmyy10.);
+        QUIT;
+
+        PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET RECLOSE_DATE = ., STATUS = "RO", RECLOSE_DATE_flag = 1, STATUS_flag = 1
+		WHERE h.CLA_CASE_NO IN (SELECT CL_FUTURE_PAIDS_&c..CLA_CASE_NO FROM CL_FUTURE_PAIDS_&c.);
+        QUIT;
+
+/*Correct CL to OP on First_open claims with paids in the future*/
+
+        PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET FIRST_CLOSE_DATE = ., STATUS = "OP", FIRST_CLOSE_DATE_flag = 1, STATUS_flag = 1
+		WHERE h.CLA_CASE_NO IN (SELECT CL_FUTURE_PAIDS_&c..CLA_CASE_NO FROM CL_FUTURE_PAIDS_&c.)
+		and h.REOPEN_DATE = .;
+        QUIT;
+
+/*Correct Reclose date with "future paids" in the past.*/
+
+        PROC SQL;
+		CREATE TABLE CLtoRO_PAST_PAIDS_&c. as 
+		SELECT UNIQUE CLA_CASE_NO, TRANS_DATE as RECLOSE_DATE
+		FROM Claims_in_clmtrns_&c.
+		WHERE STATUS not in ("OP","RO")
+		and TRANS_DATE < input(&Balancedate.,ddmmyy10.)
+		and TRANS_DATE > RECLOSE_DATE
+		and REOPEN_DATE ne .
+		and RECLOSE_DATE ne .;
+        QUIT;
+
+		PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET RECLOSE_DATE_flag = 1
+		WHERE h.CLA_CASE_NO IN (SELECT CLtoRO_PAST_PAIDS_&c..CLA_CASE_NO FROM CLtoRO_PAST_PAIDS_&c.);
+        QUIT;
+
+/*Correct First_close date with "future paids" in the past*/
+
+        PROC SQL;
+		CREATE TABLE CLtoOP_PAST_PAIDS_&c. as 
+		SELECT UNIQUE CLA_CASE_NO, TRANS_DATE as FIRST_CLOSE_DATE
+		FROM Claims_in_clmtrns_&c.
+		WHERE STATUS not in ("OP","RO")
+		and TRANS_DATE < input(&Balancedate.,ddmmyy10.)
+		and TRANS_DATE > FIRST_CLOSE_DATE
+		and REOPEN_DATE = .
+		and FIRST_CLOSE_DATE ne .;
+        QUIT;
+
+        PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard h
+		SET FIRST_CLOSE_DATE_flag = 1
+		WHERE h.CLA_CASE_NO IN (SELECT CLtoOP_PAST_PAIDS_&c..CLA_CASE_NO FROM CLtoOP_PAST_PAIDS_&c.);
+        QUIT;
+
+/* Correct Insurance Term where Null or <1. */
+
+        PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard
+        SET INSURANCE_TERM_flag = 1
+		WHERE (INSURANCE_TERM < 1 OR INSURANCE_TERM = .) AND IS_BULK = "Y";
+        QUIT;
+
+/* Correct close date for status 'DC' with no close date */
+
+        PROC SQL;
+        UPDATE CLMHDR_&c._Scorecard 
+        SET Close_Date_flag = 1
+        WHERE CLOSE_DATE = . AND STATUS = "DC";
+        QUIT;
+
+
+/*B1 Selectdata*/
+
+
+/*Create variable Expry_Dt from COVER_END_DATE and correct if insurance term is 1.  Why is it doing this??
+Also add other fields required later */
+
+		PROC SQL;
+		CREATE TABLE CLMHDR_&c._Scorecard as SELECT
+		*, Year(INCIDENT_DATE) length = 3 as Acc_Yr,
+		   month(INCIDENT_DATE) length = 3 as Acc_Mnth,
+        case when (INSURANCE_TERM = 1) OR ((INSURANCE_TERM < 1 OR INSURANCE_TERM = .) AND IS_BULK = "Y") then COVER_END_DATE + 20*365
+		else COVER_END_DATE end format = ddmmyy10. length = 4 as Expry_dt,
+		0 length = 3 as Nmbr_Bnfts_Pd,
+		0 length = 3 as Max_Mth
+        from CLMHDR_&c._Scorecard
+        WHERE FIRST_OPEN_DATE <= input(&Balancedate.,ddmmyy10.);
+		QUIT;
+
+        PROC SQL;
+        UPDATE CLMHDR_&c._Scorecard 
+        SET First_Open_Date_flag = 1
+        WHERE First_Open_Date = .;
+        QUIT;
+        
+
+        PROC SQL;
+        UPDATE CLMHDR_&c._Scorecard 
+        SET COVER_END_DATE_flag = 1
+        WHERE INSURANCE_TERM = 1;
+        QUIT;
+
+/*Add trns_type to CLMTRNS*/
+
+        PROC SQL;
+        CREATE TABLE CLMTRNS_&c._Scorecard as SELECT
+		h.*, case when h.ITEM_CLASS = 2 then "C" else t.TRANS_TYPE end as Trns_Type,
+		case when day(TRANS_DATE)>Day(input(&Balancedate.,ddmmyy10.)) then case when Month(TRANS_DATE)=12 
+				then Year(TRANS_DATE)+1 else Year(TRANS_DATE) end else Year(TRANS_DATE) end length = 3 as Acnt_Yr,
+				case when day(TRANS_DATE)>Day(input(&Balancedate.,ddmmyy10.)) then case when Month(TRANS_DATE)=12 
+				then 1 else Month(TRANS_DATE)+1 end else Month(TRANS_DATE) end length = 3 as Acnt_Mnth
+		FROM CLMTRNS_&c._Scorecard h
+		INNER JOIN TRANS_TYPE_MAP_&c. t ON (h.SPECIFICATION = t.SPECIFICATION);
+		QUIT;
+
+/*Add Reserve group to CLMTRNS for next correction*/
+
+    PROC SQL;
+	CREATE TABLE CLMTRNS_&c._Scorecard as
+	SELECT p.*, q.Rsrv_Grp from CLMTRNS_&c._Scorecard p
+	left join CLMHDR_&c._Scorecard q on p.CLA_CASE_NO=q.CLA_CASE_NO;
+    QUIT;
+
+
+%IF (&c. = PT or &c. = IE or &c. = IT)  %THEN %DO;
+
+    PROC SQL;
+	CREATE TABLE LAST_TYPE_&c. as
+	SELECT DISTINCT CLA_CASE_NO, max(TRANS_DATE) as MAX_TRNS_DATE
+	FROM CLMTRNS_&c._Scorecard
+	WHERE Rsrv_Grp IN('GD1','GR1')
+	GROUP BY CLA_CASE_NO;
+    QUIT;
+
+    PROC SQL;
+	CREATE TABLE LAST_TYPE_&c. as
+	SELECT DISTINCT l.CLA_CASE_NO, MAX_TRNS_DATE, case when sum(case when t.TRNS_TYPE = "F" then 1 else 0 end)=0 
+	then "C" else "F" end as LAST_TRANS_TYPE
+	FROM LAST_TYPE_&c. l
+	RIGHT JOIN CLMTRNS_&c._Scorecard t on (t.CLA_CASE_NO = l.CLA_CASE_NO and t.TRANS_DATE = l.MAX_TRNS_DATE)
+	WHERE t.Rsrv_Grp IN('GD1','GR1')
+	GROUP BY l.CLA_CASE_NO, MAX_TRNS_DATE;
+    QUIT;
+
+    PROC SQL;
+	UPDATE CLMHDR_&c._Scorecard h
+	SET Status = "CL", Status_Flag = 1
+	WHERE h.CLA_CASE_NO IN (SELECT LAST_TYPE_&c..CLA_CASE_NO FROM LAST_TYPE_&c. WHERE LAST_TYPE_&c..LAST_TRANS_TYPE = "F") 
+	and Status in ("OP","RO") and Rsrv_Grp IN('GD1','GR1');
+    QUIT;
+
+%END;
+
+%ELSE %IF (&c. = IT) %THEN %DO;
+
+   PROC SQL;
+   CREATE TABLE LAST_TYPE_&c. as
+   SELECT DISTINCT CLA_CASE_NO, max(TRANS_DATE) as MAX_TRNS_DATE
+   FROM CLMTRNS_&c._Scorecard
+   WHERE Rsrv_Grp IN ('GL1','GC1')
+   GROUP BY CLA_CASE_NO;
+   QUIT;
+
+   PROC SQL;
+   CREATE TABLE LAST_TYPE_&c. as
+   SELECT DISTINCT l.CLA_CASE_NO, MAX_TRNS_DATE, case when sum(case when t.TRNS_TYPE = "F" then 1 else 0 end)=0 
+   then "C" else "F" end as LAST_TRANS_TYPE
+   FROM LAST_TYPE_&c. l
+   RIGHT JOIN CLMTRNS_&c._Scorecard t on (t.CLA_CASE_NO = l.CLA_CASE_NO and t.TRANS_DATE= l.MAX_TRNS_DATE)
+   WHERE t.Rsrv_Grp IN ('GL1','GC1')
+   GROUP BY l.CLA_CASE_NO, MAX_TRNS_DATE;
+   QUIT;
+
+   PROC SQL;
+   UPDATE CLMHDR_&c._Scorecard h
+   SET Status = "CL", Status_Flag = 1
+   WHERE h.CLA_CASE_NO IN (SELECT LAST_TYPE_&c..CLA_CASE_NO FROM LAST_TYPE_&c. WHERE LAST_TYPE_&c..LAST_TRANS_TYPE = "F") and 
+   Status in ("OP","RO") and Rsrv_Grp IN ('GL1','GC1');
+   QUIT;
+
+%END;
+
+%ELSE %DO;
+%END;
+
+
+/*B2 Updatefields*/
+
+/*Add benefit type*/
+		
+		PROC SQL;
+		CREATE TABLE CLMHDR_&c._Scorecard as SELECT
+		*, case when Rsrv_Grp IN('GR1','GR3','GD1','GD3') then 'Monthly Benefit' 
+         else case when Rsrv_Grp IN('ZZ1','ZZ2')  then '.' else 'Lump Sum' end end as Benefit_Type
+		 from CLMHDR_&c._Scorecard;
+		 QUIT;
+
+
+/*Add TOTAL AMOUNT PAID to CLMHDR*/
+
+
+		PROC SQL;
+		CREATE TABLE TOTAL_AMOUNT_PAID_&c. as 
+		SELECT CLA_CASE_NO, sum(-CURRENCY_AMT) as Totl_Amnt_Pd, sum(case when Trns_Type = "O" then 0 
+		else -CURRENCY_AMT end) as Totl_Bnfts_Amnt_Pd
+		FROM Clmtrns_&c._scorecard
+		GROUP BY CLA_CASE_NO;
+        QUIT;
+
+	   PROC SQL;
+	   CREATE TABLE CLMHDR_&c._Scorecard as SELECT
+	   h.*, t.Totl_Amnt_Pd, t. Totl_Bnfts_Amnt_Pd
+	   from CLMHDR_&c._Scorecard h
+	   LEFT JOIN TOTAL_AMOUNT_PAID_&c. t on h.CLA_CASE_NO=t.CLA_CASE_NO;
+	   QUIT;
+
+
+
+   /*MAKE FRST BNFT PD YRMNTH*/
+
+        PROC SQL;
+		CREATE TABLE FIRSTLASTBENEFIT_&c. as 
+		SELECT CLA_CASE_NO,
+
+		case when day(min(TRANS_DATE))>Day(input(&Balancedate.,ddmmyy10.)) then case 
+		when Month(min(TRANS_DATE))=12 then Year(min(TRANS_DATE))+1 else Year(min(TRANS_DATE)) end 
+		else Year(min(TRANS_DATE)) end as Frst_Bnft_Pd_Yr,
+
+		case when day(min(TRANS_DATE))>Day(input(&Balancedate.,ddmmyy10.)) then case 
+		when Month(min(TRANS_DATE))=12 then 1 else Month(min(TRANS_DATE))+1 end 
+		else Month(min(TRANS_DATE)) end as Frst_Bnft_Pd_Mnth,
+
+		case when day(max(TRANS_DATE))>Day(input(&Balancedate.,ddmmyy10.)) then case 
+		when Month(max(TRANS_DATE))=12 then Year(max(TRANS_DATE))+1 else Year(max(TRANS_DATE))end 
+		else Year(max(TRANS_DATE)) end as latst_Bnft_Pd_Yr,
+
+		case when day(max(TRANS_DATE))>Day(input(&Balancedate.,ddmmyy10.)) then case 
+		when Month(max(TRANS_DATE))=12 then 1 else Month(max(TRANS_DATE))+1 end 
+		else Month(max(TRANS_DATE)) end as latst_Bnft_Pd_Mnth
+
+		FROM Clmtrns_&c._scorecard
+		WHERE -CURRENCY_AMT >1 AND Trns_Type ne "O"
+		GROUP BY CLA_CASE_NO;
+        QUIT;
+
+        
+	   PROC SQL;
+	   CREATE TABLE CLMHDR_&c._Scorecard as SELECT
+	   h.*, t.Frst_Bnft_Pd_Yr, t.Frst_Bnft_Pd_Mnth, t.latst_Bnft_Pd_Yr, t.latst_Bnft_Pd_Mnth
+	   from CLMHDR_&c._Scorecard h
+	   LEFT JOIN FIRSTLASTBENEFIT_&c. t on h.CLA_CASE_NO=t.CLA_CASE_NO;
+       QUIT;
+
+
+/*ICOP*/
+
+/*Q UPDT NMBR BNFTS PD*/
+PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard
+		SET Nmbr_Bnfts_Pd = case when Monthly_Benefit <=0 then 0 
+							when Totl_Bnfts_Amnt_Pd/Monthly_Benefit < 1
+							then 1
+							when Totl_Bnfts_Amnt_Pd/Monthly_Benefit > 60
+							then 60
+							else int(Totl_Bnfts_Amnt_Pd/Monthly_Benefit+0.5) end
+		WHERE Totl_Bnfts_Amnt_Pd > 1 and Benefit_Type= 'Monthly Benefit' ;
+QUIT;
+
+
+/*UPDT MAX MTH*/
+
+        PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard
+		SET Max_Mth = case when MAX_NO_OF_PAYMENTS <=(Year(Expry_Dt)*12+Month(Expry_Dt)-(Acc_Yr*12+Acc_Mnth))
+		then MAX_NO_OF_PAYMENTS
+	    else (Year(Expry_Dt)*12+Month(Expry_Dt)-(Acc_Yr*12+Acc_Mnth)) end,
+
+        MAX_NO_OF_PAYMENTS_flag = case when MAX_NO_OF_PAYMENTS <=(Year(Expry_Dt)*12+Month(Expry_Dt)-(Acc_Yr*12+Acc_Mnth))
+		then 0 else 1 end
+        WHERE Benefit_Type= 'Monthly Benefit';
+        QUIT;
+
+/*This corrects the max number of benefits paid*/
+
+PROC SQL;
+		UPDATE CLMHDR_&c._Scorecard
+		SET Max_Mth = Nmbr_Bnfts_Pd, MAX_NO_OF_PAYMENTS_flag = 1
+		WHERE Nmbr_Bnfts_Pd > Max_Mth and Benefit_Type= 'Monthly Benefit' ;
+QUIT;
+
+/*Add GBP Benefit*/
+
+PROC SQL;
+		Create table CLMHDR_&c._Scorecard as select
+		p.*,  q.EUR_Rate * (Case when p.Benefit_Type = 'Monthly Benefit' then p.Monthly_Benefit else p.OUTSTANDING_LIFE_BALANCE end) as Benefit_GBP
+        from CLMHDR_&c._Scorecard p
+		left join GBP_Rates q on p.Country=q.Country;
+		Quit;
+
+/*Add benefit measure for corrections*/
+
+		PROC SQL;
+		Create table CLMHDR_&c._Scorecard as select
+		*, (COVER_flag+scheme_flag+incident_date_flag+COVER_START_DATE_flag+COVER_END_DATE_flag
+        + FIRST_OPEN_DATE_flag+FIRST_CLOSE_DATE_flag+REOPEN_DATE_flag+RECLOSE_DATE_flag
+        +STATUS_flag+INSURANCE_TERM_flag+UW_COMPANY_flag+MONTHLY_BENEFIT_flag+OUTSTANDING_BALANCE_flag
+		+MAX_NO_OF_PAYMENTS_flag+DECISION_DATE_flag+Close_Date_flag+AGENT_LOAN_AGR_NO_flag) * Benefit_GBP as Adjusted_Benefit,
+		(18*Benefit_GBP) - ((COVER_flag+scheme_flag+incident_date_flag+COVER_START_DATE_flag+COVER_END_DATE_flag
+        + FIRST_OPEN_DATE_flag+FIRST_CLOSE_DATE_flag+REOPEN_DATE_flag+RECLOSE_DATE_flag
+        +STATUS_flag+INSURANCE_TERM_flag+UW_COMPANY_flag+MONTHLY_BENEFIT_flag+OUTSTANDING_BALANCE_flag
+		+MAX_NO_OF_PAYMENTS_flag+DECISION_DATE_flag+Close_Date_flag+AGENT_LOAN_AGR_NO_flag) * Benefit_GBP) as Unadjusted_Benefit
+        from CLMHDR_&c._Scorecard;
+		Quit;
+
+		
+
+
+/* Create final scorecard data */
+
+        PROC SQL;
+        CREATE TABLE &c._Scorecard_Counts as SELECT
+
+        "&c." length = 11 as COUNTRY, Rsrv_Grp, Agent format=$40. Informat = $40. length=40, Scheme,  Cover, UW_Company, Legal_Entity length = 8 format=$8., Benefit_Type, Status, Count(CLA_CASE_NO) as Claim_Count, 
+        sum(COVER_flag) as Cover_flag,
+	    sum(scheme_flag) as Scheme_flag,
+		sum(incident_date_flag) as Incident_Date_flag,
+		sum(COVER_START_DATE_flag) as COVER_START_DATE_flag,
+		sum(COVER_END_DATE_flag) as COVER_END_DATE_flag,
+		sum(FIRST_OPEN_DATE_flag) as FIRST_OPEN_DATE_flag,
+        sum(FIRST_CLOSE_DATE_flag) as FIRST_CLOSE_DATE_flag,
+		sum(REOPEN_DATE_flag) as REOPEN_DATE_flag,
+		sum(RECLOSE_DATE_flag) as RECLOSE_DATE_flag,
+		sum(STATUS_flag) as STATUS_flag,
+		sum(INSURANCE_TERM_flag) as INSURANCE_TERM_flag,
+		sum(UW_COMPANY_flag) as UW_COMPANY_flag,
+		sum(MONTHLY_BENEFIT_flag) as MONTHLY_BENEFIT_flag,
+		sum(OUTSTANDING_BALANCE_flag) as OUTSTANDING_BALANCE_flag,
+		sum(MAX_NO_OF_PAYMENTS_flag) as MAX_NO_OF_PAYMENTS_flag,
+		sum(DECISION_DATE_flag) as DECISION_DATE_flag,
+		sum(Close_Date_flag) as Close_Date_flag, 
+		sum(AGENT_LOAN_AGR_NO_flag) as AGENT_LOAN_AGR_NO_flag,
+		sum(COVER_flag)+sum(scheme_flag)+sum(incident_date_flag)+sum(COVER_START_DATE_flag)+sum(COVER_END_DATE_flag)
+        + sum(FIRST_OPEN_DATE_flag)+ sum(FIRST_CLOSE_DATE_flag)+ sum(REOPEN_DATE_flag)+sum(RECLOSE_DATE_flag)
+        +sum(STATUS_flag)+sum(INSURANCE_TERM_flag)+sum(UW_COMPANY_flag)+sum(MONTHLY_BENEFIT_flag)+sum(OUTSTANDING_BALANCE_flag)
+		+ sum(MAX_NO_OF_PAYMENTS_flag) +sum(DECISION_DATE_flag) + sum(Close_Date_flag) + sum(AGENT_LOAN_AGR_NO_flag) as Adjusted_Variables,
+        ((18*Count(CLA_CASE_NO))- (sum(COVER_flag)+sum(scheme_flag)+sum(incident_date_flag)+sum(COVER_START_DATE_flag)+sum(COVER_END_DATE_flag)
+        + sum(FIRST_OPEN_DATE_flag)+ sum(FIRST_CLOSE_DATE_flag)+ sum(REOPEN_DATE_flag)+sum(RECLOSE_DATE_flag)
+        +sum(STATUS_flag)+sum(INSURANCE_TERM_flag)+sum(UW_COMPANY_flag)+sum(MONTHLY_BENEFIT_flag)+sum(OUTSTANDING_BALANCE_flag)
+		+ sum(MAX_NO_OF_PAYMENTS_flag) +sum(DECISION_DATE_flag) + sum(Close_Date_flag) + sum(AGENT_LOAN_AGR_NO_flag))) as Unadjusted_Variables,
+        sum(Adjusted_Benefit) as Adjusted_Benefit,
+		sum(Unadjusted_Benefit) as Unadjusted_Benefit
+
+    FROM CLMHDR_&c._Scorecard 
+    GROUP BY COUNTRY, Rsrv_Grp, Agent, Scheme, Cover, UW_Company, Legal_Entity, Benefit_Type, Status;
+    QUIT; 
+
+	proc append base = CLMHDR_Scorecard_data data = &c._Scorecard_Counts FORCE; run;
+
+
+
+PROC SQL;
+       CREATE TABLE &c._TRNScorecard_Counts as SELECT
+
+        "&c." length = 11 as COUNTRY, Count(CLA_CASE_NO) as Claim_Count, 
+
+        sum(CLA_CASE_NO_flag) as CLA_CASE_NO_flag,
+        sum(TRANS_DATE_flag) as TRANS_DATE_flag,
+        sum(CURRENCY_AMT_flag) as CURRENCY_AMT_flag,
+        sum(SPECIFICATION_flag) as SPECIFICATION_flag,
+        sum(ITEM_CLASS_flag) as ITEM_CLASS_flag,
+		sum(GROSS_AMT_flag) as GROSS_AMT_flag,
+        sum(DUE_DATE_flag) as DUE_DATE_flag,
+        sum(SUBITEM_TYPE_flag) as SUBITEM_TYPE_flag,
+        sum(ACC_ITEM_NO_flag) as ACC_ITEM_NO_flag
+
+    FROM CLMTRNS_&c._Scorecard 
+	GROUP BY COUNTRY;
+    QUIT; 
+
+	proc append base = CLMTRNS_Scorecard_data  data= &c._TRNScorecard_Counts FORCE; run;
+
+%Mend;
+
+
+%Scorecard(GR);
+%Scorecard(DE);
+%Scorecard(DK);
+%Scorecard(ES);
+%Scorecard(FI);
+%Scorecard(FR);
+%Scorecard(IE);
+%Scorecard(IT);
+%Scorecard(NI);
+%Scorecard(NL);
+%Scorecard(NO);
+%Scorecard(PL);
+%Scorecard(PT);
+%Scorecard(SE);
+%Scorecard(TR);
+%Scorecard(AT);
+%Scorecard(BE);
+%Scorecard(CH);
+%Scorecard(CO);
+%Scorecard(BE);
+%Scorecard(MX);
+%Scorecard(UK);
+
+
+
+/*Export Scorecard Counts*/
+
+
+DATA Data2.CLMHDR_Scorecard_data ;
+set CLMHDR_Scorecard_data ;
+if Legal_Entity="FACL" then Legal_Entity="VIE";
+else if Legal_Entity="FICL" then Legal_Entity="IARD";
+ELSE Legal_Entity=Legal_Entity ;
+run;
+
+DATA Data2.CLMTRNS_Scorecard_data ;
+set CLMTRNS_Scorecard_data ;
+if Legal_Entity="FACL" then Legal_Entity="VIE";
+else if Legal_Entity="FICL" then Legal_Entity="IARD";
+ELSE Legal_Entity=Legal_Entity ;
+run;
+
+
+%macro EXPORT_EXCEL(DATABASE=);
+
+%let Chemin = "~/NAS/X/08.Progammes/INTERNATIONAL/06_Inventaire CLP/&Arrete./02_Elements_techniques/TIA/Arrete reel/DATA QUALITY/Claims Score Card/Reporting";
+
+PROC EXPORT       
+DATA =Data2.&DATABASE.
+OUTFILE=&Chemin.
+DBMS=xlsx REPLACE ;
+SHEET = &DATABASE. ;
+run;
+%MEND;
+
+
+%EXPORT_EXCEL(DATABASE=CLMHDR_SCORECARD_DATA);
+
+
+
+
+        
+
+
+
